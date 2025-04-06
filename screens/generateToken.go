@@ -112,8 +112,12 @@ func (m GenerateTokenModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "esc":
+		case "ctrl+c":
 			return m, tea.Quit
+		case "esc":
+			return m, func() tea.Msg {
+				return ScreenChangeMsg{Screen: "welcome"}
+			}
 
 		// Change cursor mode
 		case "ctrl+r":
@@ -337,6 +341,11 @@ func (m *GenerateTokenModel) updateInputs(msg tea.Msg) tea.Cmd {
 func (m GenerateTokenModel) View() string {
 	var b strings.Builder
 
+	// タイトルを追加
+	title := titleStyle.Render("トークン発行")
+	b.WriteString(title)
+	b.WriteString("\n\n") // タイトルとフォームの間にスペースを追加
+
 	if m.loadding {
 		b.WriteString(m.spinner.View())
 		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("222")).Render(" トークン発行中です.\n"))
@@ -369,9 +378,13 @@ func (m GenerateTokenModel) View() string {
 		b.WriteString("\n\n")
 	}
 
-	b.WriteString(gTHelpStyle.Render("cursor mode is "))
-	b.WriteString(gTCursorModeHelpStyle.Render(m.cursorMode.String()))
-	b.WriteString(gTHelpStyle.Render(" (ctrl+r to change style)"))
+	// ヘルプメッセージを追加
+	helpMessage := gTHelpStyle.Render(
+		"不具合や不明点はdiscordサーバか開発者個人へ連絡してください\n" +
+			"discord server: https://discord.gg/3bsrZ4aBXK\n" +
+			"開発者discord ID: natyosu.zip",
+	)
+	b.WriteString(helpMessage)
 
 	return b.String()
 }
