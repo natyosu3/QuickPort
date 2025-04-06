@@ -87,13 +87,28 @@ func (m WelcomeScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "up", "k":
+		case "up":
 			if m.focusIndex > 0 {
 				m.focusIndex--
 			}
-		case "down", "j":
+		case "down":
 			if m.focusIndex < 2 {
 				m.focusIndex++
+			}
+		case "1":
+			m.focusIndex = 0
+			return m, func() tea.Msg {
+				return ScreenChangeMsg{Screen: "create_account"}
+			}
+		case "2":
+			m.focusIndex = 1
+			return m, func() tea.Msg {
+				return ScreenChangeMsg{Screen: "generate_token"}
+			}
+		case "3":
+			m.focusIndex = 2
+			return m, func() tea.Msg {
+				return ScreenChangeMsg{Screen: "start_frpc"}
 			}
 		case "enter", " ":
 			switch m.focusIndex {
@@ -110,7 +125,7 @@ func (m WelcomeScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return ScreenChangeMsg{Screen: "start_frpc"}
 				}
 			}
-		case "q":
+		case "q", "ctrl+c", "esc":
 			return m, tea.Quit
 		}
 	case string:
