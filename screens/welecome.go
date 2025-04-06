@@ -2,12 +2,14 @@ package screens
 
 import (
 	"QuickPort/share"
+	"log"
 	"net/http"
 	"net/url"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"gopkg.in/ini.v1"
 )
 
 var (
@@ -51,15 +53,16 @@ type WelcomeScreen struct {
 }
 
 func NewWelcomeScreen() WelcomeScreen {
+	username := getAccountStatus()
 	return WelcomeScreen{
 		focusIndex:       0,
 		serverActive:     true,        // 初期状態はアクティブ
 		toggleInterval:   time.Second, // 状態を切り替える間隔
 		serverStatusChan: make(chan ServerStatusChan),
 		accountStatus: AccountStatus{
-			username:  "ユーザー名", // ユーザー名の初期値
-			plan:      "無料",    // プランの初期値
-			bandwidth: "800KB", // 帯域幅の初期値
+			username:  username, // ユーザー名の初期値
+			plan:      "無料",     // プランの初期値
+			bandwidth: "800KB",  // 帯域幅の初期値
 		},
 	}
 }
@@ -298,4 +301,23 @@ func checkServerStatus(ch chan ServerStatusChan) {
 	defer resp.Body.Close()
 
 	close(ch)
+}
+
+// ユーザ情報を取得する関数
+func getAccountStatus() string {
+	// iniファイルを読み込む
+	cfg, err := ini.Load("accounts.ini")
+	if err != nil {
+		log.Printf("accounts.iniの読み込みに失敗しました: %v", err)
+		return "アカウント情報が見つかりません"
+	}
+
+	// セクション "Account" から情報を取得
+	section := cfg.Section("Account")
+	email := section.Key("Email").String()
+	if email == "" {
+		return "アカウント情報が見つかりません"
+	}
+
+	return email[0:5] + "..." + email[len(email)-5:]
 }

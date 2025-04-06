@@ -8,7 +8,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/cursor"
@@ -16,6 +15,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"gopkg.in/ini.v1"
 )
 
 var (
@@ -65,16 +65,32 @@ func validatePassword(password, confirmPassword string) error {
 	return nil
 }
 
-// 情報をファイルに書き出す関数
+// 情報をiniファイルに書き出す関数
 func saveToFile(email, password string) error {
-	file, err := os.OpenFile("accounts.txt", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	// 新しいiniファイルを作成
+	cfg := ini.Empty()
+
+	// セクションとキーを設定
+	section, err := cfg.NewSection("Account")
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	_, err = section.NewKey("Email", email)
+	if err != nil {
+		return err
+	}
+	_, err = section.NewKey("Password", password)
+	if err != nil {
+		return err
+	}
 
-	_, err = file.WriteString(fmt.Sprintf("メールアドレス: %s, パスワード: %s\n", email, password))
-	return err
+	// ファイルに保存（上書き）
+	err = cfg.SaveTo("accounts.ini")
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func InitialCreateAccountModel() CreateAccountModel {
