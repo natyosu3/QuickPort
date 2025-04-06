@@ -10,6 +10,7 @@ import (
 
 	"github.com/fatedier/frp/client"
 	config "github.com/fatedier/frp/pkg/config/v1"
+	frplog "github.com/fatedier/frp/pkg/util/log"
 )
 
 type tokenInfo struct {
@@ -32,6 +33,8 @@ type TokenAuthorizationChannel struct {
 }
 
 func StartFrpc(tokenInfo tokenInfo, remotePort int) {
+	frplog.InitLogger("/dev/null", "error", 1, true)
+
 	// frpc 設定をプログラム内で構築
 	clientCfg := &config.ClientCommonConfig{
 		ServerAddr: "163.44.96.225",
@@ -79,7 +82,6 @@ func StartFrpc(tokenInfo tokenInfo, remotePort int) {
 		log.Fatalf("Failed to start frpc: %v", err)
 	}
 	log.Println("frpc is running...")
-
 }
 
 func SendTokenValidityRequest(token string, ch chan TokenAuthorizationChannel) {
@@ -145,48 +147,3 @@ func SendTokenValidityRequest(token string, ch chan TokenAuthorizationChannel) {
 	}
 	close(ch) // チャンネルを閉じる
 }
-
-// func main() {
-// 	// frpc 設定をプログラム内で構築
-// 	clientCfg := &config.ClientCommonConfig{
-// 		ServerAddr: "localhost",
-// 		ServerPort: 7000,
-// 		User:       "test",
-// 		Metadatas: map[string]string{
-// 			"token": "5d256792c92ef54215a21a17e2dde83e0caa95c328d8e7efc7d8fc534a4ee09c5f2b79f29226d7c45576b899a6ab118a2a5e0d54a038fc355cec47f467aa1141",
-// 		},
-// 	}
-
-// 	proxyCfg := &config.TCPProxyConfig{
-// 		ProxyBaseConfig: config.ProxyBaseConfig{
-// 			ProxyBackend: config.ProxyBackend{
-// 				LocalIP:   "127.0.0.1",
-// 				LocalPort: 11111,
-// 			},
-// 		},
-// 		RemotePort: 0, // 0 にすると frps 側でポートを決定
-// 	}
-
-// 	serviceOptions := client.ServiceOptions{
-// 		Common: clientCfg,
-// 		ProxyCfgs: []config.ProxyConfigurer{
-// 			proxyCfg,
-// 		},
-// 	}
-
-// 	// frpc クライアントを作成
-// 	frpcService, err := client.NewService(serviceOptions)
-// 	if err != nil {
-// 		log.Fatalf("Failed to create frpc client: %v", err)
-// 	}
-
-// 	// コンテキストを作成
-// 	ctx := context.Background()
-
-// 	err = frpcService.Run(ctx)
-// 	if err != nil {
-// 		log.Fatalf("Failed to start frpc: %v", err)
-// 	}
-// 	log.Println("frpc is running...")
-
-// }
