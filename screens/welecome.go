@@ -1,6 +1,7 @@
 package screens
 
 import (
+	"QuickPort/share"
 	"net/http"
 	"net/url"
 	"time"
@@ -107,6 +108,10 @@ func (m WelcomeScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "3":
 			m.focusIndex = 2
+			if share.IsRunningFrpc {
+				// frpcが起動している場合は、再度起動しないようにする
+				return m, nil
+			}
 			return m, func() tea.Msg {
 				return ScreenChangeMsg{Screen: "start_frpc"}
 			}
@@ -121,6 +126,10 @@ func (m WelcomeScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return ScreenChangeMsg{Screen: "generate_token"}
 				}
 			case 2:
+				if share.IsRunningFrpc {
+					// frpcが起動している場合は、再度起動しないようにする
+					return m, nil
+				}
 				return m, func() tea.Msg {
 					return ScreenChangeMsg{Screen: "start_frpc"}
 				}

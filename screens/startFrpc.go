@@ -8,12 +8,14 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"QuickPort/internal/frpc"
+	"QuickPort/share"
 )
 
 var (
@@ -41,6 +43,7 @@ type StartFrpcModel struct {
 	getPortCh      chan getPortChan
 	remotePort     int
 	getPortIsComp  bool
+	allComp        bool
 }
 
 type getPortChan struct {
@@ -92,8 +95,13 @@ func (m StartFrpcModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "esc":
+		case "ctrl+c":
 			return m, tea.Quit
+
+		case "esc":
+			return m, func() tea.Msg {
+				return ScreenChangeMsg{Screen: "welcome"}
+			}
 
 		// Set focus to next input
 		case "tab", "shift+tab", "enter", "up", "down":
@@ -134,7 +142,6 @@ func (m StartFrpcModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.isComp {
-		m.errorMessage = "トークンの検証に成功しました"
 
 		if !m.getPortIsComp {
 			// トークンの検証に成功した場合、ポートを取得する
@@ -149,7 +156,6 @@ func (m StartFrpcModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if result.Status == "OK" {
 					m.getPortLoading = false
 					m.getPortIsComp = true
-					m.errorMessage = result.Message
 					m.remotePort = result.Port
 					go frpc.StartFrpc(m.tokenInfo.TokenInfo, m.remotePort)
 				} else {
@@ -159,6 +165,16 @@ func (m StartFrpcModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			default:
 				// チャネルが空の場合は何もしない
 			}
+		}
+	}
+
+	if m.getPortIsComp {
+		m.allComp = true
+		share.IsRunningFrpc = true
+		// ポート取得が完了した場合、5秒後にメイン画面に戻る
+		time.Sleep(5 * time.Second)
+		return m, func() tea.Msg {
+			return ScreenChangeMsg{Screen: "welcome"}
 		}
 	}
 
@@ -179,7 +195,7 @@ func (m StartFrpcModel) View() string {
 	var b strings.Builder
 
 	if m.token != "" && !m.getPortIsComp {
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render("トークン: " + m.token))
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render("トークン: " + m.token[:5] + "***************"))
 		b.WriteString("\n\n")
 	}
 
@@ -187,21 +203,22 @@ func (m StartFrpcModel) View() string {
 		b.WriteString(m.spinner.View() + " トークンの検証中...\n\n")
 	}
 
-	if m.getPortLoading && !m.getPortIsComp {
-		b.WriteString(m.spinner.View() + " ポート取得中...\n\n")
+	if m.getPortLoading && !m.getPortIsComp && !m.allComp {
+		b.WriteString(m.spinner.View() + " ポート取得中\n\n")
 	}
 
 	if m.getPortIsComp {
-		b.WriteString(m.spinner.View() + " ポート取得完了\n\n")
 		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render(fmt.Sprintf("ポート: %d", m.remotePort)))
 		b.WriteString("\n\n")
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render("トークン: " + m.token))
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render("トークン: " + m.token[:5] + "***************"))
 		b.WriteString("\n\n")
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render("トークンの検証に成功しました"))
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render("🎉トークンの検証に成功しました"))
 		b.WriteString("\n\n")
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render("ポートの取得に成功しました"))
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render("🎉ポートの取得に成功しました"))
 		b.WriteString("\n\n")
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render("次のステップに進むにはEnterを押してください"))
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render("🎉正常にポートを解放できました"))
+		b.WriteString("\n\n")
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render("5秒後にメイン画面に戻ります..."))
 	}
 
 	// エラーメッセージを表示
