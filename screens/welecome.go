@@ -41,21 +41,13 @@ type AccountStatus struct {
 	bandwidth string
 }
 
-// 現在の接続情報を保持する構造体
-type CurrentConnection struct {
-	ClientID string
-	IP       string
-	Port     string
-}
-
 // メインメニューの Model
 type WelcomeScreen struct {
-	focusIndex        int
-	serverActive      bool // サーバのアクティブ状態
-	toggleInterval    time.Duration
-	serverStatusChan  chan ServerStatusChan
-	accountStatus     AccountStatus
-	currentConnection CurrentConnection
+	focusIndex       int
+	serverActive     bool // サーバのアクティブ状態
+	toggleInterval   time.Duration
+	serverStatusChan chan ServerStatusChan
+	accountStatus    AccountStatus
 }
 
 func NewWelcomeScreen() WelcomeScreen {
@@ -68,11 +60,6 @@ func NewWelcomeScreen() WelcomeScreen {
 			username:  "ユーザー名", // ユーザー名の初期値
 			plan:      "無料",    // プランの初期値
 			bandwidth: "800KB", // 帯域幅の初期値
-		},
-		currentConnection: CurrentConnection{
-			ClientID: "クライアントID",                    // クライアントIDの初期値
-			IP:       "quickport.natyosu.com:54242", // 公開IPの初期値
-			Port:     "解放中ポート",                      // 解放中ポートの初期値
 		},
 	}
 }
@@ -226,18 +213,52 @@ func (m WelcomeScreen) View() string {
 				"  帯域幅: " + lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Render(m.accountStatus.bandwidth),
 		)
 
-	// 現在の接続情報の表示
-	nowConnect := lipgloss.NewStyle().
-		Width(62).     // 全体の幅を揃える
-		Padding(1, 2). // 上下左右にパディングを追加
-		Align(lipgloss.Left).
-		Foreground(lipgloss.Color("#ffffff")). // 黄色
-		Render(
-			"[現在の接続]\n" +
-				"  クライアントID: " + lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Render(m.currentConnection.ClientID) + "\n" +
-				"  公開IP: " + lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Render(m.currentConnection.IP) + "\n" +
-				"  解放中ポート: " + lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Render(m.currentConnection.Port),
-		)
+	var nowConnect string
+	if share.IsRunningFrpc {
+		// 現在の接続情報の表示
+		nowConnect = lipgloss.NewStyle().
+			Width(120).    // 全体の幅を揃える
+			Padding(1, 2). // 上下左右にパディングを追加
+			Align(lipgloss.Left).
+			Foreground(lipgloss.Color("#ffffff")). // 黄色
+			Render(
+				"[現在の接続]\n" +
+					"  クライアントID: " + lipgloss.JoinHorizontal(lipgloss.Top,
+					lipgloss.NewStyle().Width(1).Render(""),
+					lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Render("xxxxxxxxxxxxxxxxxxxxxxxxxx"),
+				) + "\n" +
+					"  公開IP: " + lipgloss.JoinHorizontal(lipgloss.Top,
+					lipgloss.NewStyle().Width(9).Render(""),
+					lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Render(share.PublicAddr),
+				) + "\n" +
+					"  解放中ポート: " + lipgloss.JoinHorizontal(lipgloss.Top,
+					lipgloss.NewStyle().Width(3).Render(""),
+					lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Render(share.Route),
+				),
+			)
+	} else {
+		// 現在の接続情報の表示
+		nowConnect = lipgloss.NewStyle().
+			Width(62).     // 全体の幅を揃える
+			Padding(1, 2). // 上下左右にパディングを追加
+			Align(lipgloss.Left).
+			Foreground(lipgloss.Color("#ffffff")). // 黄色
+			Render(
+				"[現在の接続]\n" +
+					"  クライアントID: " + lipgloss.JoinHorizontal(lipgloss.Top,
+					lipgloss.NewStyle().Width(1).Render(""),
+					lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Render("未接続"),
+				) + "\n" +
+					"  公開IP: " + lipgloss.JoinHorizontal(lipgloss.Top,
+					lipgloss.NewStyle().Width(9).Render(""),
+					lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Render("未接続"),
+				) + "\n" +
+					"  解放中ポート: " + lipgloss.JoinHorizontal(lipgloss.Top,
+					lipgloss.NewStyle().Width(3).Render(""),
+					lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Render("未接続"),
+				),
+			)
+	}
 
 	// 左右を結合
 	content := lipgloss.JoinHorizontal(lipgloss.Top, leftColumnStyle.Render(leftView), rightColumnStyle.Render(rightView))

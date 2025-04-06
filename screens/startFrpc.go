@@ -171,6 +171,8 @@ func (m StartFrpcModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.getPortIsComp {
 		m.allComp = true
 		share.IsRunningFrpc = true
+		share.PublicAddr = fmt.Sprintf("quickport.natyosu.com:%d", m.remotePort)
+		share.Route = fmt.Sprintf("localhost:%s <-----> quickport.natyosu.com:%d", m.tokenInfo.TokenInfo.LocalPort, m.remotePort)
 		// ポート取得が完了した場合、5秒後にメイン画面に戻る
 		time.Sleep(5 * time.Second)
 		return m, func() tea.Msg {
