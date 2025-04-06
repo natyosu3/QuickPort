@@ -260,6 +260,11 @@ func (m *CreateAccountModel) updateInputs(msg tea.Msg) tea.Cmd {
 func (m CreateAccountModel) View() string {
 	var b strings.Builder
 
+	// タイトルを追加
+	title := titleStyle.Render("アカウント作成")
+	b.WriteString(title)
+	b.WriteString("\n\n") // タイトルとフォームの間にスペースを追加
+
 	if m.loadding {
 		b.WriteString(m.spinner.View())
 		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("222")).Render(" アカウント作成中.\n"))
@@ -290,9 +295,13 @@ func (m CreateAccountModel) View() string {
 		b.WriteString("\n\n")
 	}
 
-	b.WriteString(cAHelpStyle.Render("cursor mode is "))
-	b.WriteString(cACursorModeHelpStyle.Render(m.cursorMode.String()))
-	b.WriteString(cAHelpStyle.Render(" (ctrl+r to change style)"))
+	// ヘルプメッセージを追加
+	helpMessage := cAHelpStyle.Render(
+		"不具合や不明点はdiscordサーバか開発者個人へ連絡してください\n" +
+			"discord server: https://discord.gg/3bsrZ4aBXK\n" +
+			"開発者discord ID: natyosu.zip",
+	)
+	b.WriteString(helpMessage)
 
 	return b.String()
 }
