@@ -13,6 +13,12 @@ import (
 )
 
 func main() {
+	// 古いバージョンの削除
+	if err := update.DeleteOldVersion(); err != nil {
+		fmt.Printf("Failed to delete old version: %v\n", err)
+		return
+	}
+
 	// バージョンチェックを行う
 	newVer, err := util.GetNewVersion(share.VERSION)
 	if err != nil {

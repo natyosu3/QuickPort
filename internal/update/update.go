@@ -164,7 +164,7 @@ func DownloadLatestRelease() error {
 	}
 
 	// 解凍したソースコードをビルド
-	err = buildSource("./latest_release/QuickPort-main/cmd/QuickPort/main.go")
+	err = buildSource("./latest_release/QuickPort-main/")
 	if err != nil {
 		return fmt.Errorf("failed to build source: %v", err)
 	}
@@ -224,12 +224,115 @@ func untar(src, dest string) error {
 
 // ソースコードをビルドする関数
 func buildSource(sourceDir string) error {
-	cmd := exec.Command("go", "build", "-o", "QuickPort", sourceDir)
+	execPath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to get executable path: %v", err)
+	}
+
+	execDir := filepath.Dir(execPath) // ディレクトリパスを取得
+	// installしたGoのパスを取得
+	goPath := filepath.Join(execDir, "go", "bin", "go.exe")
+
+	// ソースディレクトリに移動
+	if err := os.Chdir(sourceDir); err != nil {
+		return fmt.Errorf("failed to change directory: %v", err)
+	}
+
+	fmt.Println("Building source code...")
+	fmt.Println("Current directory:", sourceDir)
+
+	// go.mod ファイルが存在しない場合は初期化
+	if _, err := os.Stat("go.mod"); os.IsNotExist(err) {
+		cmd := exec.Command(goPath, "mod", "init", "QuickPort")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to initialize go.mod: %v", err)
+		}
+	}
+
+	// 依存関係を解決
+	cmd := exec.Command(goPath, "mod", "tidy")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	err := cmd.Run()
-	if err != nil {
-		return fmt.Errorf("failed to build source: %v", err)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to tidy modules: %v", err)
 	}
+
+	if runtime.GOOS == "windows" {
+		cmd = exec.Command(goPath, "build", "-o", "QuickPort.exe", "./cmd/QuickPort/main.go")
+	} else {
+		cmd = exec.Command("go", "build", "-o", "QuickPort", "./cmd/QuickPort/main.go")
+	}
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	fmt.Println("Building...")
+	if err := cmd.Run(); err != nil { // ビルドエラーを確認
+		return fmt.Errorf("failed to build QuickPort: %v", err)
+	}
+
+	if err := os.Chdir(execDir); err != nil {
+		return fmt.Errorf("failed to change directory: %v", err)
+	}
+
+	// 自身の実行ファイルをリネーム
+	if runtime.GOOS == "windows" {
+		err = os.Rename("QuickPort.exe", "QuickPort_old.exe")
+	} else {
+		err = os.Rename("QuickPort", "QuickPort_old")
+	}
+	if err != nil {
+		return fmt.Errorf("failed to rename old executable: %v", err)
+	}
+
+	if runtime.GOOS == "windows" {
+		// 新しいQuickPort.exeを起動
+		newExePath := filepath.Join(sourceDir, "QuickPort.exe")
+
+		// 新しいQuickPort.exeを移動
+		err = os.Rename(newExePath, execPath)
+		if err != nil {
+			return fmt.Errorf("failed to move new QuickPort.exe: %v", err)
+		}
+
+		newExePath = filepath.Join(execDir, "QuickPort.exe")
+
+		cmd := exec.Command(newExePath)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Start(); err != nil {
+			return fmt.Errorf("failed to start new QuickPort.exe: %v", err)
+		}
+
+		// 現在のプロセスを終了
+		os.Exit(0)
+	} else {
+		// Linuxの場合の処理（必要に応じて追加）
+		return fmt.Errorf("unsupported operation on non-Windows systems")
+	}
+
+	return nil
+}
+
+func DeleteOldVersion() error {
+	// 古いバージョンのファイルを削除
+	oldExePath := "QuickPort_old.exe"
+	if runtime.GOOS == "linux" {
+		oldExePath = "QuickPort_old"
+	}
+
+	if _, err := os.Stat(oldExePath); err == nil {
+		err := os.Remove(oldExePath)
+		if err != nil {
+			return fmt.Errorf("failed to delete old version: %v", err)
+		}
+		fmt.Println("Old version deleted successfully!")
+	} else if os.IsNotExist(err) {
+		fmt.Println("No old version found.")
+	} else {
+		return fmt.Errorf("failed to check old version: %v", err)
+	}
+
 	return nil
 }
