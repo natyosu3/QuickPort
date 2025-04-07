@@ -5,10 +5,12 @@ go 1.23.0
 toolchain go1.23.8
 
 require (
+	github.com/Masterminds/semver/v3 v3.3.1
 	github.com/charmbracelet/bubbles v0.20.0
 	github.com/charmbracelet/bubbletea v1.3.4
 	github.com/charmbracelet/lipgloss v1.0.0
 	github.com/fatedier/frp v0.61.2
+	gopkg.in/ini.v1 v1.67.0
 )
 
 require (
@@ -69,7 +71,6 @@ require (
 	golang.org/x/tools v0.28.0 // indirect
 	google.golang.org/appengine v1.6.8 // indirect
 	google.golang.org/protobuf v1.34.1 // indirect
-	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	k8s.io/apimachinery v0.28.8 // indirect
 	k8s.io/utils v0.0.0-20230406110748-d93618cff8a2 // indirect

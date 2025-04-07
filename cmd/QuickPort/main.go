@@ -6,16 +6,31 @@ import (
 
 	"QuickPort/app"
 	"QuickPort/internal/update"
+	"QuickPort/internal/util"
+	"QuickPort/share"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
 
 func main() {
-	// updateを実行する
-	err := update.DownloadAndBuildLatestRelease()
+	// バージョンチェックを行う
+	newVer, err := util.GetNewVersion(share.VERSION)
 	if err != nil {
-		fmt.Printf("Update failed: %v\n", err)
+		fmt.Printf("Version check failed: %v\n", err)
 		return
+	}
+
+	if newVer != "" {
+		fmt.Printf("新しいバージョン %s が利用可能です。\n", newVer)
+		fmt.Println("自動更新を実行します。")
+		// updateを実行する
+		err = update.DownloadAndBuildLatestRelease()
+		if err != nil {
+			fmt.Printf("Update failed: %v\n", err)
+			return
+		}
+	} else {
+		fmt.Println("最新のバージョンです。")
 	}
 
 	p := tea.NewProgram(app.New(), tea.WithAltScreen())

@@ -164,7 +164,7 @@ func DownloadLatestRelease() error {
 	}
 
 	// 解凍したソースコードをビルド
-	err = buildSource("./latest_release/QuickPort/cmd/QuickPort/main.go")
+	err = buildSource("./latest_release/QuickPort-main/cmd/QuickPort/main.go")
 	if err != nil {
 		return fmt.Errorf("failed to build source: %v", err)
 	}
