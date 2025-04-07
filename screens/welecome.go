@@ -45,20 +45,22 @@ type AccountStatus struct {
 
 // メインメニューの Model
 type WelcomeScreen struct {
-	focusIndex       int
-	serverActive     bool // サーバのアクティブ状態
-	toggleInterval   time.Duration
-	serverStatusChan chan ServerStatusChan
-	accountStatus    AccountStatus
+	focusIndex            int
+	serverActive          bool // サーバのアクティブ状態
+	runtimeUpdateInterval time.Duration
+	toggleInterval        time.Duration
+	serverStatusChan      chan ServerStatusChan
+	accountStatus         AccountStatus
 }
 
 func NewWelcomeScreen() WelcomeScreen {
 	username := getAccountStatus()
 	return WelcomeScreen{
-		focusIndex:       0,
-		serverActive:     true,        // 初期状態はアクティブ
-		toggleInterval:   time.Second, // 状態を切り替える間隔
-		serverStatusChan: make(chan ServerStatusChan),
+		focusIndex:            0,
+		serverActive:          true,        // 初期状態はアクティブ
+		toggleInterval:        time.Second, // 状態を切り替える間隔
+		runtimeUpdateInterval: time.Minute,
+		serverStatusChan:      make(chan ServerStatusChan),
 		accountStatus: AccountStatus{
 			username:  username, // ユーザー名の初期値
 			plan:      "無料",     // プランの初期値
@@ -68,10 +70,15 @@ func NewWelcomeScreen() WelcomeScreen {
 }
 
 func (m WelcomeScreen) Init() tea.Cmd {
-	// 一定間隔で状態をトグルするコマンドを開始
-	return tea.Tick(m.toggleInterval, func(t time.Time) tea.Msg {
-		return "toggle"
-	})
+	// 1分ごとにランタイムアップデートを実行するコマンドを開始
+	return tea.Batch(
+		tea.Tick(m.runtimeUpdateInterval, func(t time.Time) tea.Msg {
+			return "runtime_update"
+		}),
+		tea.Tick(m.toggleInterval, func(t time.Time) tea.Msg {
+			return "toggle"
+		}),
+	)
 }
 
 func (m WelcomeScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -128,39 +135,22 @@ func (m WelcomeScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 	case string:
-		if msg == "toggle" {
-			// サーバの状態をトグル
-			m.serverActive = !m.serverActive
-			// 再度トグルコマンドを発行
-			return m, tea.Tick(m.toggleInterval, func(t time.Time) tea.Msg {
-				return "toggle"
+		if msg == "runtime_update" {
+			// 1分ごとにランタイムアップデートを実行
+			updateRuntimeStatus(&m)
+			// 再度ランタイムアップデートコマンドを発行
+			return m, tea.Tick(m.runtimeUpdateInterval, func(t time.Time) tea.Msg {
+				return "runtime_update"
 			})
 		}
 	}
-
-	updateRuntimeStatus(&m) // ランタイムアップデートのための関数を呼び出す
-
 	return m, nil
 }
 
 // ランタイムアップデートのための関数
 func updateRuntimeStatus(m *WelcomeScreen) tea.Cmd {
-	// サーバの状態を確認するためのゴルーチンを開始
-	go func() {
-		ch := make(chan ServerStatusChan)
-		go checkServerStatus(ch)
 
-		select {
-		case status := <-ch:
-			if status.Status == "active" {
-				m.serverActive = true
-			} else if status.Status == "inactive" {
-				m.serverActive = false
-			}
-		case <-time.After(5 * time.Second):
-			m.serverActive = false // タイムアウト時は非アクティブとする
-		}
-	}()
+	m.serverActive = checkServerStatus()
 
 	return nil
 }
@@ -196,9 +186,11 @@ func (m WelcomeScreen) View() string {
 	}
 	leftView += "[q] 終了"
 
+	var statusIcon string
 	// 右側のステータス
-	statusIcon := activeStyle.Render("●")
-	if !m.serverActive {
+	if m.serverActive {
+		statusIcon = activeStyle.Render("●")
+	} else {
 		statusIcon = inactiveStyle.Render("●")
 	}
 	rightView := statusIcon + " 認証サーバステータス"
@@ -271,12 +263,11 @@ func (m WelcomeScreen) View() string {
 }
 
 // 認証サーバがオンラインか確認する関数
-func checkServerStatus(ch chan ServerStatusChan) {
+func checkServerStatus() bool {
 	// pingエンドポイントにリクエストを送信
 	parsedURL, err := url.Parse("https://quick-port-auth.natyosu.com/ping")
 	if err != nil {
-		ch <- ServerStatusChan{Status: "error", Message: "Invalid URL"}
-		return
+		return false
 	}
 	req := &http.Request{
 		Method: "GET",
@@ -284,23 +275,19 @@ func checkServerStatus(ch chan ServerStatusChan) {
 	}
 
 	client := &http.Client{
-		Timeout: 3 * time.Second, // タイムアウトを5秒に設定
+		Timeout: 5 * time.Second, // タイムアウトを5秒に設定
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		ch <- ServerStatusChan{Status: "error", Message: "Request failed: " + err.Error()}
-		return
+		return false
 	} else {
 		if resp.StatusCode == http.StatusOK {
-			ch <- ServerStatusChan{Status: "active", Message: "Server is active"}
+			return true
 		} else {
-			ch <- ServerStatusChan{Status: "inactive", Message: "Server is inactive"}
+			return false
 		}
 	}
-	defer resp.Body.Close()
-
-	close(ch)
 }
 
 // ユーザ情報を取得する関数
