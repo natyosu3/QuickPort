@@ -286,18 +286,22 @@ func buildSource(sourceDir string) error {
 		return fmt.Errorf("failed to rename old executable: %v", err)
 	}
 
+	newExePath := filepath.Join(sourceDir, "QuickPort.exe")
+
+	err = os.Rename(newExePath, execPath)
+	if err != nil {
+		return fmt.Errorf("failed to move new QuickPort.exe: %v", err)
+	}
+
+	newExePath = filepath.Join(execDir, "QuickPort.exe")
+
+	// クリーンアップ
+	err = Cleanup()
+	if err != nil {
+		return fmt.Errorf("failed to clean up: %v", err)
+	}
+
 	if runtime.GOOS == "windows" {
-		// 新しいQuickPort.exeを起動
-		newExePath := filepath.Join(sourceDir, "QuickPort.exe")
-
-		// 新しいQuickPort.exeを移動
-		err = os.Rename(newExePath, execPath)
-		if err != nil {
-			return fmt.Errorf("failed to move new QuickPort.exe: %v", err)
-		}
-
-		newExePath = filepath.Join(execDir, "QuickPort.exe")
-
 		cmd := exec.Command(newExePath)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -312,6 +316,41 @@ func buildSource(sourceDir string) error {
 		return fmt.Errorf("unsupported operation on non-Windows systems")
 	}
 
+	return nil
+}
+
+// アップデートに利用したファイルを削除する関数
+func Cleanup() error {
+	// アップデートに利用したファイルを削除
+	goArchive := "go_archive.zip"
+	if runtime.GOOS == "linux" {
+		goArchive = "go_archive.tar.gz"
+	}
+	err := os.Remove(goArchive)
+	if err != nil {
+		return fmt.Errorf("failed to delete archive: %v", err)
+	}
+
+	releaseArchive := "latest_release.zip"
+	if runtime.GOOS == "linux" {
+		goArchive = "latest_release.tar.gz"
+	}
+	err = os.Remove(releaseArchive)
+	if err != nil {
+		return fmt.Errorf("failed to delete archive: %v", err)
+	}
+
+	err = os.RemoveAll("latest_release")
+	if err != nil {
+		return fmt.Errorf("failed to delete latest release folder: %v", err)
+	}
+
+	err = os.RemoveAll("go")
+	if err != nil {
+		return fmt.Errorf("failed to delete latest release folder: %v", err)
+	}
+
+	fmt.Println("Cleanup completed successfully!")
 	return nil
 }
 
