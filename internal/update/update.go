@@ -295,12 +295,6 @@ func buildSource(sourceDir string) error {
 
 	newExePath = filepath.Join(execDir, "QuickPort.exe")
 
-	// クリーンアップ
-	err = Cleanup()
-	if err != nil {
-		return fmt.Errorf("failed to clean up: %v", err)
-	}
-
 	if runtime.GOOS == "windows" {
 		cmd := exec.Command(newExePath)
 		cmd.Stdout = os.Stdout
@@ -320,7 +314,7 @@ func buildSource(sourceDir string) error {
 }
 
 // アップデートに利用したファイルを削除する関数
-func Cleanup() error {
+func cleanup() error {
 	// アップデートに利用したファイルを削除
 	goArchive := "go_archive.zip"
 	if runtime.GOOS == "linux" {
@@ -371,6 +365,11 @@ func DeleteOldVersion() error {
 		fmt.Println("No old version found.")
 	} else {
 		return fmt.Errorf("failed to check old version: %v", err)
+	}
+
+	err := cleanup()
+	if err != nil {
+		return nil
 	}
 
 	return nil
