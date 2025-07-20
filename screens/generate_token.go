@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/cursor"
@@ -15,6 +16,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"gopkg.in/ini.v1"
 )
 
 var (
@@ -32,7 +34,7 @@ var (
 
 type RequestTokenMetadata struct {
 	LocalIP      string `json:"local_ip"`
-	LocalPort    string `json:"local_port"`
+	LocalPort    int    `json:"local_port"`
 	ProtocolType string `json:"protocol_type"`
 }
 
@@ -145,7 +147,13 @@ func (m GenerateTokenModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// 登録ボタンが押された場合
 				email := m.inputs[0].Value()
 				password := m.inputs[1].Value()
-				localPort := m.inputs[2].Value()
+				localPortStr := m.inputs[2].Value()
+
+				localPort, err := strconv.Atoi(localPortStr)
+				if err != nil {
+					m.errorMessage = "ポート番号は数値で入力してください"
+					return m, nil
+				}
 
 				var reqest Request
 				reqest.RequestUserInfo.Email = email
@@ -223,7 +231,8 @@ func (m GenerateTokenModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func sendTokenRequest(body []byte, ch chan tokenChan) {
 	// HTTPSリクエストを送信
-	endpoint := "https://quick-port-auth.natyosu.com/auth/token-issuance"
+	// endpoint := "https://quick-port-auth.natyosu.com/auth/token-issuance"
+	endpoint := "http://localhost:8080/auth/token-issuance"
 	req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(body))
 	if err != nil {
 		log.Printf("HTTPリクエストの作成に失敗しました: %v", err)
@@ -266,9 +275,13 @@ func sendTokenRequest(body []byte, ch chan tokenChan) {
 
 	// レスポンスボディをパース
 	var parsedResponse struct {
-		Message string `json:"message"`
-		Status  string `json:"status"`
-		Token   string `json:"token"`
+		Message   string `json:"message"`
+		Status    string `json:"status"`
+		Token     string `json:"token"`
+		Email     string `json:"email,omitempty"`
+		Plan      string `json:"plan,omitempty"`
+		Bandwidth string `json:"bandwidth_limit,omitempty"`
+		ExpireAt  string `json:"expire_at,omitempty"`
 	}
 	err = json.Unmarshal(respBody, &parsedResponse)
 	if err != nil {
@@ -301,6 +314,12 @@ func sendTokenRequest(body []byte, ch chan tokenChan) {
 				token:   "",
 			}
 			return
+		}
+
+		// アカウント情報をaccounts.iniに保存
+		if err := updateAccountInfo(parsedResponse.Email, parsedResponse.Plan, parsedResponse.Bandwidth, parsedResponse.ExpireAt); err != nil {
+			log.Printf("アカウント情報の更新に失敗しました: %v", err)
+			// アカウント情報の更新に失敗してもトークンは有効なので、エラーにはしない
 		}
 
 		ch <- tokenChan{
@@ -401,4 +420,34 @@ func maskToken(token string) string {
 
 	// マスクされたトークンを返す
 	return prefix + masked
+}
+
+// updateAccountInfo は accounts.ini にアカウント情報を更新する
+func updateAccountInfo(email, plan, bandwidth, expireAt string) error {
+	// accounts.ini ファイルを読み込み、存在しない場合は新しく作成
+	cfg, err := ini.Load("accounts.ini")
+	if err != nil {
+		// ファイルが存在しない場合は新しく作成
+		cfg = ini.Empty()
+	}
+
+	// Account セクションを取得または作成
+	section := cfg.Section("Account")
+	
+	// メールアドレス、プラン、帯域幅を設定（空でない場合のみ）
+	if email != "" {
+		section.Key("Email").SetValue(email)
+	}
+	if plan != "" {
+		section.Key("Plan").SetValue(plan)
+	}
+	if bandwidth != "" {
+		section.Key("Bandwidth").SetValue(bandwidth)
+	}
+	if expireAt != "" {
+		section.Key("ExpireAt").SetValue(expireAt)
+	}
+
+	// ファイルに保存
+	return cfg.SaveTo("accounts.ini")
 }

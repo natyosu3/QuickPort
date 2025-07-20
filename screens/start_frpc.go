@@ -1,20 +1,18 @@
 package screens
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"QuickPort/internal/frpc"
+	"QuickPort/internal/core"
 	"QuickPort/share"
 )
 
@@ -31,19 +29,25 @@ var (
 )
 
 type StartFrpcModel struct {
-	focusIndex     int
-	errorMessage   string
-	isComp         bool
-	ch             chan frpc.TokenAuthorizationChannel
-	spinner        spinner.Model
-	loadding       bool
-	token          string
-	tokenInfo      frpc.TokenAuthorizationChannel
-	getPortLoading bool
-	getPortCh      chan getPortChan
-	remotePort     int
-	getPortIsComp  bool
-	allComp        bool
+	focusIndex      int
+	errorMessage    string
+	isComp          bool
+	spinner         spinner.Model
+	loadding        bool
+	token           string
+	getPortLoading  bool
+	getPortCh       chan getPortChan
+	getPortIsComp   bool
+	allComp         bool
+	clientService   *core.FRPClient
+	clientStarted   bool
+	progress        progress.Model
+	currentStep     int
+	maxSteps        int
+	stepMessages    []string
+	connectionTimer int
+	showSuccess     bool
+	successTimer    int
 }
 
 type getPortChan struct {
@@ -58,16 +62,48 @@ type WebhookPayload struct {
 	Port    int    `json:"port"`
 }
 
+type tickMsg time.Time
+type progressMsg struct {
+	step int
+}
+
+func doTick() tea.Cmd {
+	return tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
+		return tickMsg(t)
+	})
+}
+
+func doProgress(step int) tea.Cmd {
+	return func() tea.Msg {
+		return progressMsg{step: step}
+	}
+}
+
 func InitialStartFrpcModel() StartFrpcModel {
 	s := spinner.New()
-	s.Spinner = spinner.Points
-	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("222"))
+	s.Spinner = spinner.Globe
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+	
+	prog := progress.New(progress.WithDefaultGradient())
+	prog.Width = 40
+	
 	m := StartFrpcModel{
 		spinner:        s,
-		ch:             make(chan frpc.TokenAuthorizationChannel),
 		isComp:         false,
 		getPortCh:      make(chan getPortChan),
 		getPortLoading: false,
+		progress:       prog,
+		currentStep:    0,
+		maxSteps:       4,
+		stepMessages:   []string{
+			"トークンを検証中...",
+			"サーバーに接続中...",
+			"ポートを取得中...",
+			"ポートを解放中...",
+		},
+		connectionTimer: 0,
+		showSuccess:     false,
+		successTimer:    0,
 	}
 
 	// トークンファイルからトークンを読み取る
@@ -78,21 +114,61 @@ func InitialStartFrpcModel() StartFrpcModel {
 	}
 	m.token = token
 
-	// tokenが空でない場合は、トークンを検証する
-	if m.token != "" {
-		m.loadding = true
-		go frpc.SendTokenValidityRequest(m.token, m.ch)
-	}
-
 	return m
 }
 
 func (m StartFrpcModel) Init() tea.Cmd {
-	return m.spinner.Tick
+	return tea.Batch(m.spinner.Tick, doTick())
 }
 
 func (m StartFrpcModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	var cmds []tea.Cmd
+
 	switch msg := msg.(type) {
+	case ScreenChangeMsg:
+		// 画面遷移メッセージの場合、そのまま遷移
+		if msg.Screen == "welcome" {
+			return m, func() tea.Msg {
+				return ScreenChangeMsg{Screen: "welcome"}
+			}
+		}
+	
+	case tickMsg:
+		if !m.showSuccess {
+			m.connectionTimer++
+			
+			// 進捗を自動的に進める
+			if !share.IsConnection {
+				if m.connectionTimer%15 == 0 && m.currentStep < m.maxSteps-1 {
+					m.currentStep++
+				}
+			} else if !m.showSuccess {
+				m.currentStep = m.maxSteps
+				m.showSuccess = true
+				m.successTimer = 0
+			}
+		} else {
+			m.successTimer++
+			// 5秒後にメイン画面に戻る
+			if m.successTimer >= 50 {
+				return m, func() tea.Msg {
+					return ScreenChangeMsg{Screen: "welcome"}
+				}
+			}
+		}
+		return m, doTick()
+	
+	case progressMsg:
+		if msg.step <= m.maxSteps {
+			m.currentStep = msg.step
+		}
+		return m, nil
+	
+	case spinner.TickMsg:
+		m.spinner, cmd = m.spinner.Update(msg)
+		cmds = append(cmds, cmd)
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c":
@@ -123,111 +199,139 @@ func (m StartFrpcModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.loadding {
-		select {
-		case result := <-m.ch:
-			// トークンの検証結果を受け取る
-			if result.Status == "OK" {
-				m.loadding = false
-				m.isComp = true
-				m.tokenInfo = result
-				m.errorMessage = result.Message
-			} else {
-				m.loadding = false
-				m.errorMessage = result.Message
-			}
-		default:
-			// チャネルが空の場合は何もしない
-		}
+	// FRPクライアントがまだ起動していない場合のみ起動
+	if !m.clientStarted && m.token != "" {
+		// トークンからメタデータを取得し、FRPクライアントを初期化
+		m.clientService = core.NewFRPClient("127.0.0.1:7000", m.token)
+		go m.clientService.Start()
+		m.clientStarted = true
 	}
 
-	if m.isComp {
-
-		if !m.getPortIsComp {
-			// トークンの検証に成功した場合、ポートを取得する
-			if !m.getPortLoading {
-				m.getPortLoading = true
-				go getRemotePort(m.token, m.getPortCh)
-			}
-
-			select {
-			case result := <-m.getPortCh:
-				// ポート取得結果を受け取る
-				if result.Status == "OK" {
-					m.getPortLoading = false
-					m.getPortIsComp = true
-					m.remotePort = result.Port
-					go frpc.StartFrpc(m.tokenInfo.TokenInfo, m.remotePort)
-				} else {
-					m.getPortLoading = false
-					m.errorMessage = result.Message
-				}
-			default:
-				// チャネルが空の場合は何もしない
-			}
-		}
-	}
-
-	if m.getPortIsComp {
-		m.allComp = true
-		share.IsRunningFrpc = true
-		share.PublicAddr = fmt.Sprintf("quickport.natyosu.com:%d", m.remotePort)
-		share.Route = fmt.Sprintf("localhost:%s <-----> quickport.natyosu.com:%d", m.tokenInfo.TokenInfo.LocalPort, m.remotePort)
-		// ポート取得が完了した場合、5秒後にメイン画面に戻る
-		time.Sleep(5 * time.Second)
-		return m, func() tea.Msg {
-			return ScreenChangeMsg{Screen: "welcome"}
-		}
-	}
-
-	// Handle character input and blinking
-	cmd := m.updateInputs(msg)
-	return m, cmd
-}
-
-func (m *StartFrpcModel) updateInputs(msg tea.Msg) tea.Cmd {
-	// スピナーの更新コマンドを取得
-	var spinnerCmd tea.Cmd
-	m.spinner, spinnerCmd = m.spinner.Update(msg)
-
-	return spinnerCmd
+	return m, tea.Batch(cmds...)
 }
 
 func (m StartFrpcModel) View() string {
 	var b strings.Builder
 
-	if m.token != "" && !m.getPortIsComp {
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render("トークン: " + m.token[:5] + "***************"))
+	// ヘッダー
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("205")).
+		Border(lipgloss.RoundedBorder()).
+		Padding(0, 2).
+		MarginBottom(2)
+	
+	b.WriteString(headerStyle.Render("🚀 QuickPort - FRP接続"))
+	b.WriteString("\n\n")
+
+	// トークン表示
+	if m.token != "" {
+		tokenStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("14")).
+			Background(lipgloss.Color("240")).
+			Padding(0, 1).
+			Italic(true)
+		
+		maskedToken := m.token[:5] + strings.Repeat("*", 15)
+		b.WriteString("🔑 " + tokenStyle.Render("トークン: "+maskedToken))
 		b.WriteString("\n\n")
 	}
 
-	if m.loadding && !m.getPortIsComp {
-		b.WriteString(m.spinner.View() + " トークンの検証中...\n\n")
-	}
-
-	if m.getPortLoading && !m.getPortIsComp && !m.allComp {
-		b.WriteString(m.spinner.View() + " ポート取得中\n\n")
-	}
-
-	if m.getPortIsComp {
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render(fmt.Sprintf("ポート: %d", m.remotePort)))
+	if !m.showSuccess {
+		// 接続中の表示
+		loadingStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("220")).
+			Bold(true)
+		
+		b.WriteString(loadingStyle.Render("🔄 接続処理中..."))
 		b.WriteString("\n\n")
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render("トークン: " + m.token[:5] + "***************"))
+		
+		// スピナーと現在のステップ
+		spinnerStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("205"))
+		
+		b.WriteString(spinnerStyle.Render(m.spinner.View()))
+		b.WriteString(" ")
+		
+		if m.currentStep < len(m.stepMessages) {
+			b.WriteString(m.stepMessages[m.currentStep])
+		}
 		b.WriteString("\n\n")
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render("🎉トークンの検証に成功しました"))
+		
+		// プログレスバー
+		progressValue := float64(m.currentStep) / float64(m.maxSteps)
+		progressView := m.progress.ViewAs(progressValue)
+		
+		progressStyle := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			Padding(1).
+			MarginTop(1)
+		
+		b.WriteString(progressStyle.Render(progressView))
 		b.WriteString("\n\n")
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render("🎉ポートの取得に成功しました"))
-		b.WriteString("\n\n")
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render("🎉正常にポートを解放できました"))
-		b.WriteString("\n\n")
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render("5秒後にメイン画面に戻ります..."))
+		
+		// ステップ表示
+		for i, stepMsg := range m.stepMessages {
+			var stepStyle lipgloss.Style
+			if i < m.currentStep {
+				stepStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("82")) // 完了 - 緑
+				b.WriteString("✅ ")
+			} else if i == m.currentStep {
+				stepStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("220")) // 進行中 - 黄
+				b.WriteString("⏳ ")
+			} else {
+				stepStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240")) // 未実行 - グレー
+				b.WriteString("⭕ ")
+			}
+			
+			b.WriteString(stepStyle.Render(stepMsg))
+			b.WriteString("\n")
+		}
+		
+	} else {
+		// 成功表示
+		successBoxStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("82")).
+			Border(lipgloss.DoubleBorder()).
+			Padding(1, 2).
+			MarginTop(1).
+			Bold(true)
+		
+		successContent := []string{
+			"🎉 接続が完了しました！",
+			"",
+			"✅ トークンの検証に成功",
+			"✅ ポートの取得に成功", 
+			"✅ ポートの解放に成功",
+			"",
+			fmt.Sprintf("⏰ %d秒後にメイン画面に戻ります...", 5-m.successTimer/10),
+		}
+		
+		b.WriteString(successBoxStyle.Render(strings.Join(successContent, "\n")))
 	}
 
 	// エラーメッセージを表示
 	if m.errorMessage != "" && !m.getPortIsComp {
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("160")).Render(m.errorMessage))
-		b.WriteString("\n\n")
+		errorStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("160")).
+			Background(lipgloss.Color("52")).
+			Padding(0, 1).
+			Border(lipgloss.RoundedBorder()).
+			MarginTop(2)
+		
+		b.WriteString("\n")
+		b.WriteString(errorStyle.Render("❌ " + m.errorMessage))
+		b.WriteString("\n")
 	}
+
+	// フッター（操作ヘルプ）
+	helpStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240")).
+		MarginTop(2).
+		Italic(true)
+	
+	b.WriteString("\n")
+	b.WriteString(helpStyle.Render("ESC: メイン画面に戻る  •  Ctrl+C: 終了"))
 
 	return b.String()
 }
@@ -250,78 +354,4 @@ func readTokenFromFile() (string, error) {
 
 	// ファイルの内容を文字列として返す
 	return string(data), nil
-}
-
-func getRemotePort(token string, ch chan getPortChan) {
-	defer close(ch) // 関数終了時に一度だけチャンネルを閉じる
-
-	// HTTPSリクエストを送信
-	endpoint := "https://vps-manager-api.natyosu.com/free_port_acquisition"
-	req, err := http.NewRequest("GET", endpoint, nil)
-	if err != nil {
-		log.Printf("HTTPリクエストの作成に失敗しました: %v", err)
-		ch <- getPortChan{
-			Status:  "ERROR",
-			Message: "HTTPリクエストの作成に失敗しました: " + err.Error(),
-			Port:    -1,
-		}
-		return
-	}
-	req.Header.Set("token", token)
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("HTTPリクエストの送信に失敗しました: %v", err)
-		ch <- getPortChan{
-			Status:  "ERROR",
-			Message: "HTTPリクエストの送信に失敗しました: " + err.Error(),
-			Port:    -1,
-		}
-		return
-	}
-	defer resp.Body.Close()
-
-	// レスポンスボディを読み取る
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.Printf("レスポンスボディの読み取りに失敗しました: %v", err)
-		ch <- getPortChan{
-			Status:  "ERROR",
-			Message: "レスポンスボディの読み取りに失敗しました: " + err.Error(),
-			Port:    -1,
-		}
-		return
-	}
-
-	// レスポンスボディをパース
-	var parsedResponse struct {
-		Message string `json:"message"`
-		Status  string `json:"status"`
-		Port    int    `json:"port"`
-	}
-	err = json.Unmarshal(respBody, &parsedResponse)
-	if err != nil {
-		log.Printf("286: レスポンスボディのパースに失敗しました: %v", err)
-		ch <- getPortChan{
-			Status:  "ERROR",
-			Message: "レスポンスボディのパースに失敗しました: " + err.Error(),
-			Port:    -1,
-		}
-		return
-	}
-
-	if parsedResponse.Status == "ERROR" {
-		ch <- getPortChan{
-			Status:  "ERROR",
-			Message: parsedResponse.Message,
-			Port:    -1,
-		}
-	} else {
-		ch <- getPortChan{
-			Status:  "OK",
-			Message: parsedResponse.Message,
-			Port:    parsedResponse.Port,
-		}
-	}
 }

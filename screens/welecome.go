@@ -30,6 +30,9 @@ type ScreenChangeMsg struct {
 	Screen string
 }
 
+// アカウント情報更新メッセージ
+type UpdateAccountStatusMsg struct{}
+
 // 認証サーバの状態を取得するチャンネル用構造体
 type ServerStatusChan struct {
 	Status  string
@@ -41,6 +44,7 @@ type AccountStatus struct {
 	username  string
 	plan      string
 	bandwidth string
+	expireAt  string
 }
 
 // メインメニューの Model
@@ -54,18 +58,14 @@ type WelcomeScreen struct {
 }
 
 func NewWelcomeScreen() WelcomeScreen {
-	username := getAccountStatus()
+	accountStatus := getAccountStatus()
 	return WelcomeScreen{
 		focusIndex:            0,
 		serverActive:          true,        // 初期状態はアクティブ
 		toggleInterval:        time.Second, // 状態を切り替える間隔
 		runtimeUpdateInterval: time.Minute,
 		serverStatusChan:      make(chan ServerStatusChan),
-		accountStatus: AccountStatus{
-			username:  username, // ユーザー名の初期値
-			plan:      "無料",     // プランの初期値
-			bandwidth: "800KB",  // 帯域幅の初期値
-		},
+		accountStatus:         accountStatus,
 	}
 }
 
@@ -143,6 +143,10 @@ func (m WelcomeScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return "runtime_update"
 			})
 		}
+	case UpdateAccountStatusMsg:
+		// アカウント情報を更新
+		m.accountStatus = getAccountStatus()
+		return m, nil
 	}
 	return m, nil
 }
@@ -205,11 +209,12 @@ func (m WelcomeScreen) View() string {
 			"[アカウントステータス]\n" +
 				"  ユーザー名: " + lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Render(m.accountStatus.username) + "\n" +
 				"  プラン: " + lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Render(m.accountStatus.plan) + "\n" +
-				"  帯域幅: " + lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Render(m.accountStatus.bandwidth),
+				"  帯域幅: " + lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Render(m.accountStatus.bandwidth) +
+				"  有効期限: " + lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Render(m.accountStatus.expireAt),
 		)
 
 	var nowConnect string
-	if share.IsRunningFrpc {
+	if share.IsConnection {
 		// 現在の接続情報の表示
 		nowConnect = lipgloss.NewStyle().
 			Width(120).    // 全体の幅を揃える
@@ -291,20 +296,62 @@ func checkServerStatus() bool {
 }
 
 // ユーザ情報を取得する関数
-func getAccountStatus() string {
+func getAccountStatus() AccountStatus {
 	// iniファイルを読み込む
 	cfg, err := ini.Load("accounts.ini")
 	if err != nil {
 		log.Printf("accounts.iniの読み込みに失敗しました: %v", err)
-		return "アカウント情報が見つかりません"
+		return AccountStatus{
+			username:  "アカウント情報が見つかりません",
+			plan:      "不明",
+			bandwidth: "不明",
+			expireAt:  "不明",
+		}
 	}
 
 	// セクション "Account" から情報を取得
 	section := cfg.Section("Account")
 	email := section.Key("Email").String()
-	if email == "" {
-		return "アカウント情報が見つかりません"
+	plan := section.Key("Plan").String()
+	bandwidth := section.Key("Bandwidth").String()
+	expireAt := section.Key("ExpireAt").String()
+
+	// ユーザ名の表示形式を決定（Emailから生成）
+	var displayUsername string
+	if email != "" {
+		if len(email) > 10 {
+			displayUsername = email[0:5] + "..." + email[len(email)-5:]
+		} else {
+			displayUsername = email
+		}
+	} else {
+		displayUsername = "アカウント情報が見つかりません"
 	}
 
-	return email[0:5] + "..." + email[len(email)-5:]
+	// デフォルト値の設定
+	if plan == "" {
+		plan = "無料"
+	}
+	if bandwidth == "" {
+		bandwidth = "800KB"
+	}
+	if expireAt == "" {
+		expireAt = "未設定"
+	} else {
+		// 有効期限が設定されている場合は、フォーマットを整える
+		// 2027-07-20T21:04:44+09:00 -> 2027年07月20日 21:04:44
+		if parsedTime, err := time.Parse(time.RFC3339, expireAt); err == nil {
+			expireAt = parsedTime.Format("2006年01月02日 15:04:05")
+		} else {
+			// パースに失敗した場合は元の文字列をそのまま使用
+			log.Printf("有効期限の解析に失敗しました: %v, 元の値: %s", err, expireAt)
+		}
+	}
+
+	return AccountStatus{
+		username:  displayUsername,
+		plan:      plan,
+		bandwidth: bandwidth,
+		expireAt:  expireAt,
+	}
 }
