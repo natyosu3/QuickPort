@@ -12,7 +12,7 @@ import (
 
 func main() {
 	// ログファイルを作成または開く
-	logFile, err := os.OpenFile("server.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+	logFile, err := os.OpenFile("client.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
 	if err != nil {
 		fmt.Println("Failed to open log file:", err)
 		return
