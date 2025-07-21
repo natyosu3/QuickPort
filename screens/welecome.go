@@ -2,10 +2,12 @@ package screens
 
 import (
 	"QuickPort/share"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -67,6 +69,12 @@ type AccountStatus struct {
 	expireAt  string
 }
 
+// GitHubリリース情報構造体
+type GitHubRelease struct {
+	TagName string `json:"tag_name"`
+	Body    string `json:"body"`
+}
+
 // メインメニューの Model
 type WelcomeScreen struct {
 	focusIndex            int
@@ -80,10 +88,12 @@ type WelcomeScreen struct {
 	pulseState            bool
 	showBanner            bool
 	bannerOffset          int
+	releaseMessage        string // GitHubリリースメッセージ
 }
 
 func NewWelcomeScreen() WelcomeScreen {
 	accountStatus := getAccountStatus()
+	releaseMessage := getReleaseMessage()
 	
 	s := spinner.New()
 	s.Spinner = spinner.Dot
@@ -101,6 +111,7 @@ func NewWelcomeScreen() WelcomeScreen {
 		pulseState:            false,
 		showBanner:            true,
 		bannerOffset:          0,
+		releaseMessage:        releaseMessage,
 	}
 }
 
@@ -208,9 +219,9 @@ func (m WelcomeScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // ランタイムアップデートのための関数
 func updateRuntimeStatus(m *WelcomeScreen) tea.Cmd {
-
 	m.serverActive = checkServerStatus()
-
+	// リリースメッセージも更新
+	m.releaseMessage = getReleaseMessage()
 	return nil
 }
 
@@ -219,7 +230,7 @@ var titleStyle = lipgloss.NewStyle().
 	Border(lipgloss.DoubleBorder()).
 	Align(lipgloss.Center).
 	Padding(1).
-	Width(80).                       // 幅を拡張
+	Width(116).                      // 幅を少し縮小
 	Bold(true).                      // 太字に設定
 	Foreground(lipgloss.Color("51")) // より鮮やかな青色
 
@@ -249,7 +260,7 @@ func (m WelcomeScreen) View() string {
 		Padding(0, 2).
 		Bold(true).
 		Align(lipgloss.Center).
-		Width(80).
+		Width(116).
 		Render(bannerText)
 
 	// タイトル
@@ -270,7 +281,7 @@ func (m WelcomeScreen) View() string {
 		Background(lipgloss.Color("237")).
 		Padding(0, 1).
 		Bold(true).
-		Width(30)
+		Width(50)
 	
 	leftView.WriteString(menuHeaderStyle.Render("📋 操作メニュー"))
 	leftView.WriteString("\n\n")
@@ -286,13 +297,13 @@ func (m WelcomeScreen) View() string {
 				Background(lipgloss.Color("205")).
 				Padding(0, 1).
 				Bold(true).
-				Width(28)
+				Width(48)
 			leftView.WriteString("→ ")
 		} else {
 			// 通常のアイテム
 			itemStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("240")).
-				Width(28)
+				Width(48)
 			leftView.WriteString("  ")
 		}
 		
@@ -326,31 +337,26 @@ func (m WelcomeScreen) View() string {
 		Background(lipgloss.Color("237")).
 		Padding(0, 1).
 		Bold(true).
-		Width(30).
+		Width(50).
 		Render("🌐 サーバーステータス")
 	
 	rightView := serverStatusHeader + "\n\n"
 	rightView += fmt.Sprintf("  %s %s %s\n", statusIcon, statusStyle.Render(statusText), m.spinner.View())
 	rightView += "\n"
 	
-	// 接続統計（ダミーデータ）
+	// 接続統計（リリースメッセージ）
 	statsStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("14")).
 		Border(lipgloss.RoundedBorder()).
 		Padding(1).
-		Width(28)
+		Width(48)
 	
-	stats := "📊 統計情報\n" +
-		"  • 稼働時間: 99.9%\n" +
-		"  • 応答時間: <50ms\n" +
-		"  • アクティブ接続: " + func() string {
-			if share.IsConnection {
-				return "1"
-			}
-			return "0"
-		}()
+	var displayMessage string
+	if m.releaseMessage != "" {
+		displayMessage = "📢 最新情報\n" + m.releaseMessage
+	}
 	
-	rightView += statsStyle.Render(stats)
+	rightView += statsStyle.Render(displayMessage)
 
 	// アカウントステータスの表示 - 改善
 	accountHeaderStyle := lipgloss.NewStyle().
@@ -358,13 +364,13 @@ func (m WelcomeScreen) View() string {
 		Background(lipgloss.Color("237")).
 		Padding(0, 1).
 		Bold(true).
-		Width(80).
+		Width(116).
 		Align(lipgloss.Center)
 	
 	accountHeader := accountHeaderStyle.Render("👤 アカウント情報")
 	
 	accountContentStyle := lipgloss.NewStyle().
-		Width(80).
+		Width(116).
 		Padding(1, 2).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("39"))
@@ -385,7 +391,7 @@ func (m WelcomeScreen) View() string {
 		Background(lipgloss.Color("237")).
 		Padding(0, 1).
 		Bold(true).
-		Width(80).
+		Width(116).
 		Align(lipgloss.Center)
 	
 	connectionHeader := connectionHeaderStyle.Render("🔗 接続情報")
@@ -393,29 +399,28 @@ func (m WelcomeScreen) View() string {
 	var connectionContent string
 	if share.IsConnection {
 		connectionBoxStyle := lipgloss.NewStyle().
-			Width(80).
+			Width(116).
 			Padding(1, 2).
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("82"))
 		
 		connectionContent = fmt.Sprintf(
 			"🟢 接続中\n"+
-			"クライアントID: %s  |  公開IP: %s  |  解放中ポート: %s",
-			lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true).Render("xxxxxxxxxxxxxxxxxxxxxxxxxx"),
+			"公開IP: %s\n解放中ポート: %s",
 			lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true).Render(share.PublicAddr),
 			lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true).Render(share.Route),
 		)
 		connectionContent = connectionBoxStyle.Render(connectionContent)
 	} else {
 		connectionBoxStyle := lipgloss.NewStyle().
-			Width(80).
+			Width(116).
 			Padding(1, 2).
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("240"))
 		
 		connectionContent = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(
 			"🔴 未接続\n" +
-			"クライアントID: 未接続  |  公開IP: 未接続  |  解放中ポート: 未接続",
+			"公開IP: 未接続  |  解放中ポート: 未接続",
 		)
 		connectionContent = connectionBoxStyle.Render(connectionContent)
 	}
@@ -425,15 +430,15 @@ func (m WelcomeScreen) View() string {
 	// メインコンテンツ（左右結合）
 	content := lipgloss.JoinHorizontal(
 		lipgloss.Top, 
-		lipgloss.NewStyle().Width(35).Padding(1).Render(leftView.String()), 
-		lipgloss.NewStyle().Width(35).Padding(1).Render(rightView),
+		lipgloss.NewStyle().Width(55).Padding(1).Render(leftView.String()), 
+		lipgloss.NewStyle().Width(55).Padding(1).Render(rightView),
 	)
 
 	// フッター（ヘルプ）
 	helpStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("240")).
 		Align(lipgloss.Center).
-		Width(80).
+		Width(116).
 		Italic(true)
 	
 	help := helpStyle.Render("↑↓: 選択  •  Enter/Space: 実行  •  1-3: 直接選択  •  q: 終了")
@@ -481,6 +486,46 @@ func checkServerStatus() bool {
 			return false
 		}
 	}
+}
+
+// GitHubリリースメッセージを取得する関数
+func getReleaseMessage() string {
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	resp, err := client.Get("https://api.github.com/repos/natyosu3/QuickPort/releases/latest")
+	if err != nil {
+		log.Printf("GitHubリリース情報の取得に失敗しました: %v", err)
+		return ""
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("GitHubリリース情報の取得に失敗しました (ステータス: %d)", resp.StatusCode)
+		return ""
+	}
+
+	var release GitHubRelease
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		log.Printf("GitHubリリース情報のデコードに失敗しました: %v", err)
+		return ""
+	}
+
+	// [メッセージ] xxxxx の部分を抽出
+	re := regexp.MustCompile(`\[メッセージ\]\s*(.+)`)
+	matches := re.FindStringSubmatch(release.Body)
+	if len(matches) > 1 {
+		return "  " + strings.TrimSpace(matches[1])
+	}
+
+	// [メッセージ]が見つからない場合は、bodyの最初の数行を返す
+	lines := strings.Split(release.Body, "\n")
+	if len(lines) > 0 && strings.TrimSpace(lines[0]) != "" {
+		return "  " + strings.TrimSpace(lines[0])
+	}
+
+	return ""
 }
 
 // ユーザ情報を取得する関数

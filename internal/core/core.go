@@ -71,7 +71,7 @@ func NewFRPClient(serverAddr, token string) *FRPClient {
 		token:         token,
 		proxies:        []ProxyConfig{}, // 初期化時は空、認証後に設定
 		localConns:     make(map[string]net.Conn),
-		reconnectDelay: 5 * time.Second,
+		reconnectDelay: 60 * time.Second,
 	}
 }
 
@@ -203,6 +203,8 @@ func (c *FRPClient) handleConnection() error {
 		case MSG_TYPE_CLOSE:
 			c.handleClose(&msg)
 		case MSG_TYPE_KICK:
+			share.IsConnection = false // 接続状態を更新
+			share.IsRunningFrpc = false // FRPクライアントを停止
 			log.Printf("Received kick message from server. Disconnecting...")
 			return fmt.Errorf("kicked by server")
 		}
