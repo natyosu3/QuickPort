@@ -76,15 +76,14 @@ func NewFRPClient(serverAddr, token string) *FRPClient {
 }
 
 func (c *FRPClient) Start() error {
-	for {
-		err := c.connect()
-		if err != nil {
-			log.Printf("Connection failed: %v", err)
-			log.Printf("Retrying in %v...", c.reconnectDelay)
-			time.Sleep(c.reconnectDelay)
-			continue
-		}
+	// 最初の接続試行
+	err := c.connect()
+	if err != nil {
+		return fmt.Errorf("初期接続に失敗しました: %v", err)
+	}
 
+	// 接続成功後は再接続ループに入る
+	for {
 		err = c.handleConnection()
 		if err != nil {
 			log.Printf("Connection error: %v", err)
@@ -92,6 +91,14 @@ func (c *FRPClient) Start() error {
 
 		log.Printf("Disconnected from server. Retrying in %v...", c.reconnectDelay)
 		time.Sleep(c.reconnectDelay)
+		
+		// 再接続試行
+		err = c.connect()
+		if err != nil {
+			log.Printf("Reconnection failed: %v", err)
+			time.Sleep(c.reconnectDelay)
+			continue
+		}
 	}
 }
 

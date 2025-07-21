@@ -48,6 +48,8 @@ type StartFrpcModel struct {
 	connectionTimer int
 	showSuccess     bool
 	successTimer    int
+	errorCh         chan error
+	hasError        bool
 }
 
 type getPortChan struct {
@@ -66,6 +68,9 @@ type tickMsg time.Time
 type progressMsg struct {
 	step int
 }
+type errorMsg struct {
+	err error
+}
 
 func doTick() tea.Cmd {
 	return tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
@@ -73,9 +78,10 @@ func doTick() tea.Cmd {
 	})
 }
 
-func doProgress(step int) tea.Cmd {
+func waitForError(errorCh chan error) tea.Cmd {
 	return func() tea.Msg {
-		return progressMsg{step: step}
+		err := <-errorCh
+		return errorMsg{err: err}
 	}
 }
 
@@ -104,6 +110,8 @@ func InitialStartFrpcModel() StartFrpcModel {
 		connectionTimer: 0,
 		showSuccess:     false,
 		successTimer:    0,
+		errorCh:         make(chan error, 1),
+		hasError:        false,
 	}
 
 	// トークンファイルからトークンを読み取る
@@ -111,6 +119,7 @@ func InitialStartFrpcModel() StartFrpcModel {
 	if err != nil {
 		log.Printf("トークンの読み取りに失敗しました: %v", err)
 		m.errorMessage = "トークンの読み取りに失敗しました"
+		m.hasError = true
 	}
 	m.token = token
 
@@ -118,7 +127,7 @@ func InitialStartFrpcModel() StartFrpcModel {
 }
 
 func (m StartFrpcModel) Init() tea.Cmd {
-	return tea.Batch(m.spinner.Tick, doTick())
+	return tea.Batch(m.spinner.Tick, doTick(), waitForError(m.errorCh))
 }
 
 func (m StartFrpcModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -134,8 +143,18 @@ func (m StartFrpcModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	
+	case errorMsg:
+		// エラーが発生した場合
+		m.hasError = true
+		m.errorMessage = fmt.Sprintf("%v", msg.err)
+		
+		// エラー監視を再開
+		cmds = append(cmds, waitForError(m.errorCh))
+		return m, tea.Batch(cmds...)
+	
+	
 	case tickMsg:
-		if !m.showSuccess {
+		if !m.showSuccess && !m.hasError {
 			m.connectionTimer++
 			
 			// 進捗を自動的に進める
@@ -148,7 +167,7 @@ func (m StartFrpcModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.showSuccess = true
 				m.successTimer = 0
 			}
-		} else {
+		} else if m.showSuccess {
 			m.successTimer++
 			// 5秒後にメイン画面に戻る
 			if m.successTimer >= 50 {
@@ -200,10 +219,18 @@ func (m StartFrpcModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// FRPクライアントがまだ起動していない場合のみ起動
-	if !m.clientStarted && m.token != "" {
+	if !m.clientStarted && m.token != "" && !m.hasError {
 		// トークンからメタデータを取得し、FRPクライアントを初期化
 		m.clientService = core.NewFRPClient("127.0.0.1:7000", m.token)
-		go m.clientService.Start()
+		go func() {
+			err := m.clientService.Start()
+			if err != nil {
+				select {
+				case m.errorCh <- err:
+				default:
+				}
+			}
+		}()
 		m.clientStarted = true
 	}
 
@@ -237,7 +264,27 @@ func (m StartFrpcModel) View() string {
 		b.WriteString("\n\n")
 	}
 
-	if !m.showSuccess {
+	if m.hasError {
+		// エラー表示
+		errorBoxStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("160")).
+			Border(lipgloss.DoubleBorder()).
+			BorderForeground(lipgloss.Color("160")).
+			Padding(1, 2).
+			MarginTop(1).
+			Bold(true)
+		
+		errorContent := []string{
+			"❌ 接続エラーが発生しました",
+			"",
+			fmt.Sprintf("📋 エラー詳細: %s", m.errorMessage),
+			"",
+			"� ESCキーでメイン画面に戻れます",
+		}
+		
+		b.WriteString(errorBoxStyle.Render(strings.Join(errorContent, "\n")))
+		
+	} else if !m.showSuccess {
 		// 接続中の表示
 		loadingStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("220")).
@@ -310,28 +357,16 @@ func (m StartFrpcModel) View() string {
 		b.WriteString(successBoxStyle.Render(strings.Join(successContent, "\n")))
 	}
 
-	// エラーメッセージを表示
-	if m.errorMessage != "" && !m.getPortIsComp {
-		errorStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("160")).
-			Background(lipgloss.Color("52")).
-			Padding(0, 1).
-			Border(lipgloss.RoundedBorder()).
-			MarginTop(2)
-		
-		b.WriteString("\n")
-		b.WriteString(errorStyle.Render("❌ " + m.errorMessage))
-		b.WriteString("\n")
-	}
-
 	// フッター（操作ヘルプ）
 	helpStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("240")).
 		MarginTop(2).
 		Italic(true)
 	
+	helpText := "ESC: メイン画面に戻る  •  Ctrl+C: 終了"
+	
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("ESC: メイン画面に戻る  •  Ctrl+C: 終了"))
+	b.WriteString(helpStyle.Render(helpText))
 
 	return b.String()
 }
