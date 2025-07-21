@@ -231,8 +231,7 @@ func (m GenerateTokenModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func sendTokenRequest(body []byte, ch chan tokenChan) {
 	// HTTPSリクエストを送信
-	// endpoint := "https://quick-port-auth.natyosu.com/auth/token-issuance"
-	endpoint := "http://localhost:8080/auth/token-issuance"
+	endpoint := "https://quick-port-auth.natyosu.com/auth/token-issuance"
 	req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(body))
 	if err != nil {
 		log.Printf("HTTPリクエストの作成に失敗しました: %v", err)
@@ -400,7 +399,7 @@ func (m GenerateTokenModel) View() string {
 	// ヘルプメッセージを追加
 	helpMessage := gTHelpStyle.Render(
 		"不具合や不明点はdiscordサーバか開発者個人へ連絡してください\n" +
-			"discord server: https://discord.gg/3bsrZ4aBXK\n" +
+			"discord server: https://discord.gg/VgqaneJmaR\n" +
 			"開発者discord ID: natyosu.zip",
 	)
 	b.WriteString(helpMessage)

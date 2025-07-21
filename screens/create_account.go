@@ -319,7 +319,7 @@ func (m CreateAccountModel) View() string {
 	// ヘルプメッセージを追加
 	helpMessage := cAHelpStyle.Render(
 		"不具合や不明点はdiscordサーバか開発者個人へ連絡してください\n" +
-			"discord server: https://discord.gg/3bsrZ4aBXK\n" +
+			"discord server: https://discord.gg/VgqaneJmaR\n" +
 			"開発者discord ID: natyosu.zip",
 	)
 	b.WriteString(helpMessage)
@@ -329,8 +329,7 @@ func (m CreateAccountModel) View() string {
 
 func sendCreateAccountRequest(body []byte, ch chan accountChan) {
 	// HTTPSリクエストを送信
-	// endpoint := "https://quick-port-auth.natyosu.com/auth/signup"
-	endpoint := "http://localhost:8080/auth/signup"
+	endpoint := "https://quick-port-auth.natyosu.com/auth/signup"
 	req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(body))
 	if err != nil {
 		log.Printf("HTTPリクエストの作成に失敗しました: %v", err)
