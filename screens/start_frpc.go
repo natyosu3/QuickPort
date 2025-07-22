@@ -221,7 +221,7 @@ func (m StartFrpcModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// FRPクライアントがまだ起動していない場合のみ起動
 	if !m.clientStarted && m.token != "" && !m.hasError {
 		// トークンからメタデータを取得し、FRPクライアントを初期化
-		m.clientService = core.NewFRPClient("127.0.0.1:7000", m.token)
+		m.clientService = core.NewFRPClient("163.44.96.225:5555", m.token)
 		go func() {
 			err := m.clientService.Start()
 			if err != nil {

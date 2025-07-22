@@ -329,7 +329,8 @@ func (m CreateAccountModel) View() string {
 
 func sendCreateAccountRequest(body []byte, ch chan accountChan) {
 	// HTTPSリクエストを送信
-	endpoint := "https://quick-port-auth.natyosu.com/auth/signup"
+	// endpoint := "https://quick-port-auth.natyosu.com/auth/signup"
+	endpoint := "http://163.44.96.225:8081/auth/signup"
 	req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(body))
 	if err != nil {
 		log.Printf("HTTPリクエストの作成に失敗しました: %v", err)
