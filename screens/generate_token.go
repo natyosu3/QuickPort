@@ -232,7 +232,8 @@ func (m GenerateTokenModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func sendTokenRequest(body []byte, ch chan tokenChan) {
 	// HTTPSリクエストを送信
 	// endpoint := "https://quick-port-auth.natyosu.com/auth/token-issuance"
-	endpoint := "http://163.44.96.225:8081/auth/token-issuance"
+	// endpoint := "http://163.44.96.225:8081/auth/token-issuance"
+	endpoint := "http://localhost:8081/auth/token-issuance"
 	req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(body))
 	if err != nil {
 		log.Printf("HTTPリクエストの作成に失敗しました: %v", err)
