@@ -11,19 +11,22 @@ import (
 )
 
 func main() {
-	// ログファイルを作成または開く
-	logFile, err := os.OpenFile("client.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
-	if err != nil {
-		fmt.Println("Failed to open log file:", err)
-		return
+	// プログラム引数でlog出力を有効にする
+	if len(os.Args) > 1 && os.Args[1] == "--log" {
+		// ログファイルを作成または開く
+		logFile, err := os.OpenFile("qp.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+		if err != nil {
+			fmt.Println("Failed to open log file:", err)
+			return
+		}
+		defer logFile.Close()
+
+		// ログの出力先をファイルに設定
+		log.SetOutput(logFile)
+
+		// ログのフォーマットを設定
+		log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 	}
-	defer logFile.Close()
-
-	// ログの出力先をファイルに設定
-	log.SetOutput(logFile)
-
-	// ログのフォーマットを設定
-	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 
 	p := tea.NewProgram(app.New(), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {

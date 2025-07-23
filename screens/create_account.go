@@ -66,7 +66,7 @@ func validatePassword(password, confirmPassword string) error {
 }
 
 // 情報をiniファイルに書き出す関数
-func saveToFile(email, password string) error {
+func saveToFile(email string) error {
 	// 新しいiniファイルを作成
 	cfg := ini.Empty()
 
@@ -76,10 +76,6 @@ func saveToFile(email, password string) error {
 		return err
 	}
 	_, err = section.NewKey("Email", email)
-	if err != nil {
-		return err
-	}
-	_, err = section.NewKey("Password", password)
 	if err != nil {
 		return err
 	}
@@ -204,7 +200,7 @@ func (m CreateAccountModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				go sendCreateAccountRequest(requestBody, m.ch)
 
 				// ファイルに保存
-				if err := saveToFile(email, password); err != nil {
+				if err := saveToFile(email); err != nil {
 					fmt.Println("ファイル保存エラー:", err)
 					return InitialCreateAccountModel(), nil
 				}
