@@ -532,7 +532,7 @@ func getAccountStatus() AccountStatus {
 		log.Printf("accounts.iniの読み込みに失敗しました: %v", err)
 		return AccountStatus{
 			username:  "アカウント情報が見つかりません",
-			plan:      "不明",
+			plan:      "トークン未発行",
 			bandwidth: "不明",
 			expireAt:  "不明",
 		}
@@ -559,13 +559,13 @@ func getAccountStatus() AccountStatus {
 
 	// デフォルト値の設定
 	if plan == "" {
-		plan = "無料"
+		plan = "トークン未発行"
 	}
 	if bandwidth == "" {
-		bandwidth = "300KB"
+		bandwidth = "不明"
 	}
 	if expireAt == "" {
-		expireAt = "未設定"
+		expireAt = "不明"
 	} else {
 		// 有効期限が設定されている場合は、フォーマットを整える
 		// 2027-07-20T21:04:44+09:00 -> 2027年07月20日 21:04:44
