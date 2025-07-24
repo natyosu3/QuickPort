@@ -3,6 +3,6 @@ QuickPort は, グローバルIPを持たないMinecraftサーバーホスト向
 サーバ運営者は自身のipを画した状態でサーバを公開することができます.
 
 ---
-公式discord サーバ: https://discord.gg/3bsrZ4aBXK
+公式discord サーバ: https://discord.gg/VgqaneJmaR
 
 開発者discord: natyosu.zip

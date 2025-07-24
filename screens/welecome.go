@@ -2,32 +2,44 @@ package screens
 
 import (
 	"QuickPort/share"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"gopkg.in/ini.v1"
 )
 
-var (
-	focusedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
-	blurredStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	activeStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("10")) // 緑色
-	inactiveStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))  // 赤色
-	cursorStyle   = focusedStyle
-	noStyle       = lipgloss.NewStyle()
-
-	// レイアウト用のスタイル
-	leftColumnStyle  = lipgloss.NewStyle().Width(30).Padding(1)
-	rightColumnStyle = lipgloss.NewStyle().Width(30).Padding(1).Align(lipgloss.Center)
-)
-
 // 画面切り替えメッセージ
 type ScreenChangeMsg struct {
 	Screen string
+}
+
+// アカウント情報更新メッセージ
+type UpdateAccountStatusMsg struct{}
+
+// アニメーション用メッセージ
+type tickWelcomeMsg time.Time
+type pulseMsg struct{}
+
+// アニメーション用コマンド
+func doTickWelcome() tea.Cmd {
+	return tea.Tick(time.Millisecond*200, func(t time.Time) tea.Msg {
+		return tickWelcomeMsg(t)
+	})
+}
+
+func doPulse() tea.Cmd {
+	return tea.Tick(time.Second*2, func(t time.Time) tea.Msg {
+		return pulseMsg{}
+	})
 }
 
 // 認証サーバの状態を取得するチャンネル用構造体
@@ -41,6 +53,7 @@ type AccountStatus struct {
 	username  string
 	plan      string
 	bandwidth string
+	expireAt  string
 }
 
 // メインメニューの Model
@@ -51,26 +64,40 @@ type WelcomeScreen struct {
 	toggleInterval        time.Duration
 	serverStatusChan      chan ServerStatusChan
 	accountStatus         AccountStatus
+	spinner               spinner.Model
+	tickCount             int
+	pulseState            bool
+	showBanner            bool
+	bannerOffset          int
+	releaseMessage        string // GitHubリリースメッセージ
 }
 
 func NewWelcomeScreen() WelcomeScreen {
-	username := getAccountStatus()
+	accountStatus := getAccountStatus()
+	releaseMessage := getReleaseMessage()
+	
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+	
 	return WelcomeScreen{
 		focusIndex:            0,
 		serverActive:          true,        // 初期状態はアクティブ
 		toggleInterval:        time.Second, // 状態を切り替える間隔
 		runtimeUpdateInterval: time.Minute,
 		serverStatusChan:      make(chan ServerStatusChan),
-		accountStatus: AccountStatus{
-			username:  username, // ユーザー名の初期値
-			plan:      "無料",     // プランの初期値
-			bandwidth: "800KB",  // 帯域幅の初期値
-		},
+		accountStatus:         accountStatus,
+		spinner:               s,
+		tickCount:             0,
+		pulseState:            false,
+		showBanner:            true,
+		bannerOffset:          0,
+		releaseMessage:        releaseMessage,
 	}
 }
 
 func (m WelcomeScreen) Init() tea.Cmd {
-	// 1分ごとにランタイムアップデートを実行するコマンドを開始
+	// 複数のコマンドを同時に開始
 	return tea.Batch(
 		tea.Tick(m.runtimeUpdateInterval, func(t time.Time) tea.Msg {
 			return "runtime_update"
@@ -78,11 +105,30 @@ func (m WelcomeScreen) Init() tea.Cmd {
 		tea.Tick(m.toggleInterval, func(t time.Time) tea.Msg {
 			return "toggle"
 		}),
+		m.spinner.Tick,
+		doTickWelcome(),
+		doPulse(),
 	)
 }
 
 func (m WelcomeScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	var cmds []tea.Cmd
+
 	switch msg := msg.(type) {
+	case tickWelcomeMsg:
+		m.tickCount++
+		m.bannerOffset = (m.bannerOffset + 1) % 20
+		return m, doTickWelcome()
+	
+	case pulseMsg:
+		m.pulseState = !m.pulseState
+		return m, doPulse()
+	
+	case spinner.TickMsg:
+		m.spinner, cmd = m.spinner.Update(msg)
+		cmds = append(cmds, cmd)
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "up":
@@ -143,15 +189,20 @@ func (m WelcomeScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return "runtime_update"
 			})
 		}
+	case UpdateAccountStatusMsg:
+		// アカウント情報を更新
+		m.accountStatus = getAccountStatus()
+		return m, nil
 	}
-	return m, nil
+	
+	return m, tea.Batch(cmds...)
 }
 
 // ランタイムアップデートのための関数
 func updateRuntimeStatus(m *WelcomeScreen) tea.Cmd {
-
 	m.serverActive = checkServerStatus()
-
+	// リリースメッセージも更新
+	m.releaseMessage = getReleaseMessage()
 	return nil
 }
 
@@ -160,112 +211,240 @@ var titleStyle = lipgloss.NewStyle().
 	Border(lipgloss.DoubleBorder()).
 	Align(lipgloss.Center).
 	Padding(1).
-	Width(62).                       // 左右のビューの幅を合わせたサイズ
+	Width(116).                      // 幅を少し縮小
 	Bold(true).                      // 太字に設定
-	Foreground(lipgloss.Color("12")) // 青色に設定
+	Foreground(lipgloss.Color("51")) // より鮮やかな青色
+
+// グラデーション風のバナー
+func createBanner(offset int, pulseState bool) string {
+	banner := "✨ QuickPort - Fast & Secure Port Forwarding ✨"
+	if pulseState {
+		banner = "🌟 QuickPort - Fast & Secure Port Forwarding 🌟"
+	}
+	
+	// 文字を動かすアニメーション
+	chars := []rune(banner)
+	for i := range chars {
+		if (i+offset)%4 == 0 {
+			chars[i] = []rune(strings.ToUpper(string(chars[i])))[0]
+		}
+	}
+	return string(chars)
+}
 
 func (m WelcomeScreen) View() string {
+	// アニメーションバナー
+	bannerText := createBanner(m.bannerOffset, m.pulseState)
+	banner := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("205")).
+		Background(lipgloss.Color("235")).
+		Padding(0, 2).
+		Bold(true).
+		Align(lipgloss.Center).
+		Width(116).
+		Render(bannerText)
+
 	// タイトル
 	title := titleStyle.Render("Welcome to QuickPort")
 
-	// 左側のメニュー
+	// 左側のメニュー - 改善された見た目
 	menuItems := []string{
-		"[1] アカウント作成",
-		"[2] トークン生成",
-		"[3] ポート公開",
+		"🆕 アカウント作成",
+		"🔑 トークン生成", 
+		"🚀 ポート公開",
 	}
 
-	var leftView string
-	leftView += "[操作メニュー]\n"
+	var leftView strings.Builder
+	
+	// メニューヘッダー
+	menuHeaderStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("39")).
+		Background(lipgloss.Color("237")).
+		Padding(0, 1).
+		Bold(true).
+		Width(50)
+	
+	leftView.WriteString(menuHeaderStyle.Render("📋 操作メニュー"))
+	leftView.WriteString("\n\n")
+	
 	for i, item := range menuItems {
+		var itemStyle lipgloss.Style
+		prefix := fmt.Sprintf("[%d] ", i+1)
+		
 		if i == m.focusIndex {
-			leftView += focusedStyle.Render(item) + "\n"
+			// フォーカスされたアイテム
+			itemStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("0")).
+				Background(lipgloss.Color("205")).
+				Padding(0, 1).
+				Bold(true).
+				Width(48)
+			leftView.WriteString("→ ")
 		} else {
-			leftView += blurredStyle.Render(item) + "\n"
+			// 通常のアイテム
+			itemStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("240")).
+				Width(48)
+			leftView.WriteString("  ")
 		}
+		
+		leftView.WriteString(itemStyle.Render(prefix + item))
+		leftView.WriteString("\n")
 	}
-	leftView += "[q] 終了"
+	
+	// 終了オプション
+	leftView.WriteString("\n")
+	quitStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("160")).
+		Italic(true)
+	leftView.WriteString(quitStyle.Render("  [q] 終了"))
 
-	var statusIcon string
-	// 右側のステータス
+	// 右側のステータス - より詳細に
+	var statusIcon, statusText string
+	var statusStyle lipgloss.Style
+	
 	if m.serverActive {
-		statusIcon = activeStyle.Render("●")
+		statusIcon = "🟢"
+		statusText = "オンライン"
+		statusStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("82"))
 	} else {
-		statusIcon = inactiveStyle.Render("●")
+		statusIcon = "🔴"
+		statusText = "オフライン"
+		statusStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("160"))
 	}
-	rightView := statusIcon + " 認証サーバステータス"
+	
+	serverStatusHeader := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("39")).
+		Background(lipgloss.Color("237")).
+		Padding(0, 1).
+		Bold(true).
+		Width(50).
+		Render("🌐 サーバーステータス")
+	
+	rightView := serverStatusHeader + "\n\n"
+	rightView += fmt.Sprintf("  %s %s %s\n", statusIcon, statusStyle.Render(statusText), m.spinner.View())
+	rightView += "\n"
+	
+	// 接続統計（リリースメッセージ）
+	statsStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("14")).
+		Border(lipgloss.RoundedBorder()).
+		Padding(1).
+		Width(48)
+	
+	var displayMessage string
+	if m.releaseMessage != "" {
+		displayMessage = "📢 最新情報\n" + m.releaseMessage
+	}
+	
+	rightView += statsStyle.Render(displayMessage)
 
-	// アカウントステータスの表示
-	accountStatus := lipgloss.NewStyle().
-		Width(62).     // 全体の幅を揃える
-		Padding(1, 2). // 上下左右にパディングを追加
-		Align(lipgloss.Left).
-		Foreground(lipgloss.Color("#ffffff")). // 黄色
-		Render(
-			"[アカウントステータス]\n" +
-				"  ユーザー名: " + lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Render(m.accountStatus.username) + "\n" +
-				"  プラン: " + lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Render(m.accountStatus.plan) + "\n" +
-				"  帯域幅: " + lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Render(m.accountStatus.bandwidth),
+	// アカウントステータスの表示 - 改善
+	accountHeaderStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("39")).
+		Background(lipgloss.Color("237")).
+		Padding(0, 1).
+		Bold(true).
+		Width(116).
+		Align(lipgloss.Center)
+	
+	accountHeader := accountHeaderStyle.Render("👤 アカウント情報")
+	
+	accountContentStyle := lipgloss.NewStyle().
+		Width(116).
+		Padding(1, 2).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("39"))
+	
+	accountContent := fmt.Sprintf(
+		"ユーザー名: %s  |  プラン: %s  |  帯域幅: %s  |  有効期限: %s",
+		lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true).Render(m.accountStatus.username),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true).Render(m.accountStatus.plan),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true).Render(m.accountStatus.bandwidth),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true).Render(m.accountStatus.expireAt),
+	)
+	
+	accountStatus := lipgloss.JoinVertical(lipgloss.Center, accountHeader, accountContentStyle.Render(accountContent))
+
+	// 現在の接続情報 - 改善
+	connectionHeaderStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("39")).
+		Background(lipgloss.Color("237")).
+		Padding(0, 1).
+		Bold(true).
+		Width(116).
+		Align(lipgloss.Center)
+	
+	connectionHeader := connectionHeaderStyle.Render("🔗 接続情報")
+	
+	var connectionContent string
+	if share.IsConnection {
+		connectionBoxStyle := lipgloss.NewStyle().
+			Width(116).
+			Padding(1, 2).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("82"))
+		
+		connectionContent = fmt.Sprintf(
+			"🟢 接続中\n"+
+			"公開IP: %s\n解放中ポート: %s",
+			lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true).Render(share.PublicAddr),
+			lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true).Render(share.Route),
 		)
-
-	var nowConnect string
-	if share.IsRunningFrpc {
-		// 現在の接続情報の表示
-		nowConnect = lipgloss.NewStyle().
-			Width(120).    // 全体の幅を揃える
-			Padding(1, 2). // 上下左右にパディングを追加
-			Align(lipgloss.Left).
-			Foreground(lipgloss.Color("#ffffff")). // 黄色
-			Render(
-				"[現在の接続]\n" +
-					"  クライアントID: " + lipgloss.JoinHorizontal(lipgloss.Top,
-					lipgloss.NewStyle().Width(1).Render(""),
-					lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Render("xxxxxxxxxxxxxxxxxxxxxxxxxx"),
-				) + "\n" +
-					"  公開IP: " + lipgloss.JoinHorizontal(lipgloss.Top,
-					lipgloss.NewStyle().Width(9).Render(""),
-					lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Render(share.PublicAddr),
-				) + "\n" +
-					"  解放中ポート: " + lipgloss.JoinHorizontal(lipgloss.Top,
-					lipgloss.NewStyle().Width(3).Render(""),
-					lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Render(share.Route),
-				),
-			)
+		connectionContent = connectionBoxStyle.Render(connectionContent)
 	} else {
-		// 現在の接続情報の表示
-		nowConnect = lipgloss.NewStyle().
-			Width(62).     // 全体の幅を揃える
-			Padding(1, 2). // 上下左右にパディングを追加
-			Align(lipgloss.Left).
-			Foreground(lipgloss.Color("#ffffff")). // 黄色
-			Render(
-				"[現在の接続]\n" +
-					"  クライアントID: " + lipgloss.JoinHorizontal(lipgloss.Top,
-					lipgloss.NewStyle().Width(1).Render(""),
-					lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Render("未接続"),
-				) + "\n" +
-					"  公開IP: " + lipgloss.JoinHorizontal(lipgloss.Top,
-					lipgloss.NewStyle().Width(9).Render(""),
-					lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Render("未接続"),
-				) + "\n" +
-					"  解放中ポート: " + lipgloss.JoinHorizontal(lipgloss.Top,
-					lipgloss.NewStyle().Width(3).Render(""),
-					lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Render("未接続"),
-				),
-			)
+		connectionBoxStyle := lipgloss.NewStyle().
+			Width(116).
+			Padding(1, 2).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("240"))
+		
+		connectionContent = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(
+			"🔴 未接続\n" +
+			"公開IP: 未接続  |  解放中ポート: 未接続",
+		)
+		connectionContent = connectionBoxStyle.Render(connectionContent)
 	}
+	
+	nowConnect := lipgloss.JoinVertical(lipgloss.Center, connectionHeader, connectionContent)
 
-	// 左右を結合
-	content := lipgloss.JoinHorizontal(lipgloss.Top, leftColumnStyle.Render(leftView), rightColumnStyle.Render(rightView))
+	// メインコンテンツ（左右結合）
+	content := lipgloss.JoinHorizontal(
+		lipgloss.Top, 
+		lipgloss.NewStyle().Width(55).Padding(1).Render(leftView.String()), 
+		lipgloss.NewStyle().Width(55).Padding(1).Render(rightView),
+	)
 
-	// タイトル、アカウントステータス、現在の接続情報、コンテンツを結合
-	return lipgloss.JoinVertical(lipgloss.Top, title, accountStatus, nowConnect, content)
+	// フッター（ヘルプ）
+	helpStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240")).
+		Align(lipgloss.Center).
+		Width(116).
+		Italic(true)
+	
+	help := helpStyle.Render("↑↓: 選択  •  Enter/Space: 実行  •  1-3: 直接選択  •  q: 終了")
+
+	// すべてを結合
+	return lipgloss.JoinVertical(
+		lipgloss.Center, 
+		banner,
+		"",
+		title, 
+		"",
+		accountStatus, 
+		"",
+		nowConnect, 
+		"",
+		content,
+		"",
+		help,
+	)
 }
 
 // 認証サーバがオンラインか確認する関数
 func checkServerStatus() bool {
 	// pingエンドポイントにリクエストを送信
-	parsedURL, err := url.Parse("https://quick-port-auth.natyosu.com/ping")
+	parsedURL, err := url.Parse(share.BASE_API_URL + "/ping")
 	if err != nil {
 		return false
 	}
@@ -290,21 +469,118 @@ func checkServerStatus() bool {
 	}
 }
 
+// GitHubリリースメッセージを取得する関数
+func getReleaseMessage() string {
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	// WebサイトからHTMLを取得
+	resp, err := client.Get("https://qp.natyosu.com/") // または適切なWebサイトのURL
+	if err != nil {
+		log.Printf("Webサイトからのメッセージ取得に失敗しました: %v", err)
+		return ""
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("Webサイトからのメッセージ取得に失敗しました (ステータス: %d)", resp.StatusCode)
+		return ""
+	}
+
+	// レスポンスボディを読み取り
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("レスポンスボディの読み取りに失敗しました: %v", err)
+		return ""
+	}
+
+	htmlContent := string(body)
+
+	// 現在のバージョンを取得
+	currentVersion := share.VERSION
+
+	// HTMLから該当バージョンのメッセージを抽出
+	// data-version="2.0.0" data-message="..." のパターンを検索
+	pattern := fmt.Sprintf(`data-version="%s"\s+data-message="([^"]+)"`, regexp.QuoteMeta(currentVersion))
+	re := regexp.MustCompile(pattern)
+	matches := re.FindStringSubmatch(htmlContent)
+	
+	if len(matches) > 1 {
+		return "  " + strings.TrimSpace(matches[1])
+	}
+
+	// 該当バージョンが見つからない場合は、最新バージョンのメッセージを取得
+	// data-version="..." data-message="..." の全てのパターンを検索
+	allVersionsPattern := `data-version="([^"]+)"\s+data-message="([^"]+)"`
+	allRe := regexp.MustCompile(allVersionsPattern)
+	allMatches := allRe.FindAllStringSubmatch(htmlContent, -1)
+	
+	if len(allMatches) > 0 {
+		// 最初に見つかったメッセージを返す（通常は最新版）
+		return "  " + strings.TrimSpace(allMatches[0][2])
+	}
+
+	return ""
+}
+
 // ユーザ情報を取得する関数
-func getAccountStatus() string {
+func getAccountStatus() AccountStatus {
 	// iniファイルを読み込む
 	cfg, err := ini.Load("accounts.ini")
 	if err != nil {
 		log.Printf("accounts.iniの読み込みに失敗しました: %v", err)
-		return "アカウント情報が見つかりません"
+		return AccountStatus{
+			username:  "アカウント情報が見つかりません",
+			plan:      "トークン未発行",
+			bandwidth: "不明",
+			expireAt:  "不明",
+		}
 	}
 
 	// セクション "Account" から情報を取得
 	section := cfg.Section("Account")
 	email := section.Key("Email").String()
-	if email == "" {
-		return "アカウント情報が見つかりません"
+	plan := section.Key("Plan").String()
+	bandwidth := section.Key("Bandwidth").String()
+	expireAt := section.Key("ExpireAt").String()
+
+	// ユーザ名の表示形式を決定（Emailから生成）
+	var displayUsername string
+	if email != "" {
+		if len(email) > 10 {
+			displayUsername = email[0:5] + "..." + email[len(email)-5:]
+		} else {
+			displayUsername = email
+		}
+	} else {
+		displayUsername = "アカウント情報が見つかりません"
 	}
 
-	return email[0:5] + "..." + email[len(email)-5:]
+	// デフォルト値の設定
+	if plan == "" {
+		plan = "トークン未発行"
+	}
+	if bandwidth == "" {
+		bandwidth = "不明"
+	}
+	if expireAt == "" {
+		expireAt = "不明"
+	} else {
+		// 有効期限が設定されている場合は、フォーマットを整える
+		// 2027-07-20T21:04:44+09:00 -> 2027年07月20日 21:04:44
+		if parsedTime, err := time.Parse(time.RFC3339, expireAt); err == nil {
+			expireAt = parsedTime.Format("2006年01月02日 15:04:05")
+		} else {
+			// パースに失敗した場合は元の文字列をそのまま使用
+			log.Printf("有効期限の解析に失敗しました: %v, 元の値: %s", err, expireAt)
+		}
+	}
+
+	return AccountStatus{
+		username:  displayUsername,
+		plan:      plan,
+		bandwidth: bandwidth,
+		expireAt:  expireAt,
+	}
 }

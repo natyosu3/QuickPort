@@ -1,13 +1,14 @@
 package screens
 
 import (
+	"QuickPort/share"
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/cursor"
@@ -15,6 +16,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"gopkg.in/ini.v1"
 )
 
 var (
@@ -23,16 +25,41 @@ var (
 	gTCursorStyle         = gTFocusedStyle
 	gTNoStyle             = lipgloss.NewStyle()
 	gTHelpStyle           = gTBlurredStyle
-	gTCursorModeHelpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	gTTokenStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("111")).Bold(true).Border(lipgloss.DoubleBorder())
-
-	gTFocusedButton = gTFocusedStyle.Render("[ トークン発行 ]")
-	gTBlurredButton = fmt.Sprintf("[ %s ]", gTBlurredStyle.Render("トークン発行"))
+	gTTokenStyle          = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("46")).
+		Background(lipgloss.Color("22")).
+		Bold(true).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("46")).
+		Padding(1, 2).
+		Align(lipgloss.Center)
+	gTTitleStyle = lipgloss.NewStyle().
+		Border(lipgloss.DoubleBorder()).
+		Align(lipgloss.Center).
+		Padding(1).
+		Width(60).
+		Bold(true).
+		Foreground(lipgloss.Color("205"))
+	gTFocusedButton = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("15")).
+		Background(lipgloss.Color("205")).
+		Bold(true).
+		Padding(0, 3).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("205")).
+		Render("トークン発行")
+	gTBlurredButton = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240")).
+		Background(lipgloss.Color("236")).
+		Padding(0, 3).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("240")).
+		Render("トークン発行")
 )
 
 type RequestTokenMetadata struct {
 	LocalIP      string `json:"local_ip"`
-	LocalPort    string `json:"local_port"`
+	LocalPort    int    `json:"local_port"`
 	ProtocolType string `json:"protocol_type"`
 }
 
@@ -67,7 +94,7 @@ type GenerateTokenModel struct {
 func InitialGenerateTokenModel() GenerateTokenModel {
 	s := spinner.New()
 	s.Spinner = spinner.Points
-	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("222"))
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 	m := GenerateTokenModel{
 		inputs:  make([]textinput.Model, 3),
 		spinner: s,
@@ -79,21 +106,22 @@ func InitialGenerateTokenModel() GenerateTokenModel {
 		t = textinput.New()
 		t.Cursor.Style = gTCursorStyle
 		t.CharLimit = 32
+		t.Width = 40
 
 		switch i {
 		case 0:
-			t.Placeholder = "メールアドレス"
+			t.Placeholder = "example@domain.com"
 			t.Focus()
 			t.PromptStyle = gTFocusedStyle
 			t.TextStyle = gTFocusedStyle
 			t.CharLimit = 64
 		case 1:
-			t.Placeholder = "パスワード"
+			t.Placeholder = "パスワードを入力"
 			t.EchoMode = textinput.EchoPassword
 			t.EchoCharacter = '•'
 			t.CharLimit = 64
 		case 2:
-			t.Placeholder = "マインクラフトサーバの公開ポート番号 ex:25565"
+			t.Placeholder = "25565"
 			t.CharLimit = 10
 		}
 
@@ -145,7 +173,13 @@ func (m GenerateTokenModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// 登録ボタンが押された場合
 				email := m.inputs[0].Value()
 				password := m.inputs[1].Value()
-				localPort := m.inputs[2].Value()
+				localPortStr := m.inputs[2].Value()
+
+				localPort, err := strconv.Atoi(localPortStr)
+				if err != nil {
+					m.errorMessage = "ポート番号は数値で入力してください"
+					return m, nil
+				}
 
 				var reqest Request
 				reqest.RequestUserInfo.Email = email
@@ -223,7 +257,7 @@ func (m GenerateTokenModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func sendTokenRequest(body []byte, ch chan tokenChan) {
 	// HTTPSリクエストを送信
-	endpoint := "https://quick-port-auth.natyosu.com/auth/token-issuance"
+	endpoint := share.BASE_API_URL + "/auth/token-issuance"
 	req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(body))
 	if err != nil {
 		log.Printf("HTTPリクエストの作成に失敗しました: %v", err)
@@ -266,9 +300,13 @@ func sendTokenRequest(body []byte, ch chan tokenChan) {
 
 	// レスポンスボディをパース
 	var parsedResponse struct {
-		Message string `json:"message"`
-		Status  string `json:"status"`
-		Token   string `json:"token"`
+		Message   string `json:"message"`
+		Status    string `json:"status"`
+		Token     string `json:"token"`
+		Email     string `json:"email,omitempty"`
+		Plan      string `json:"plan,omitempty"`
+		Bandwidth string `json:"bandwidth_limit,omitempty"`
+		ExpireAt  string `json:"expire_at,omitempty"`
 	}
 	err = json.Unmarshal(respBody, &parsedResponse)
 	if err != nil {
@@ -301,6 +339,12 @@ func sendTokenRequest(body []byte, ch chan tokenChan) {
 				token:   "",
 			}
 			return
+		}
+
+		// アカウント情報をaccounts.iniに保存
+		if err := updateAccountInfo(parsedResponse.Email, parsedResponse.Plan, parsedResponse.Bandwidth, parsedResponse.ExpireAt); err != nil {
+			log.Printf("アカウント情報の更新に失敗しました: %v", err)
+			// アカウント情報の更新に失敗してもトークンは有効なので、エラーにはしない
 		}
 
 		ch <- tokenChan{
@@ -342,46 +386,148 @@ func (m GenerateTokenModel) View() string {
 	var b strings.Builder
 
 	// タイトルを追加
-	title := titleStyle.Render("トークン発行")
+	title := gTTitleStyle.Render("トークン発行")
 	b.WriteString(title)
-	b.WriteString("\n\n") // タイトルとフォームの間にスペースを追加
+	b.WriteString("\n\n")
 
 	if m.loadding {
-		b.WriteString(m.spinner.View())
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("222")).Render(" トークン発行中です.\n"))
+		loadingStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("205")).
+			Bold(true)
+		
+		b.WriteString(lipgloss.NewStyle().Align(lipgloss.Center).Render(
+			m.spinner.View() + " " + loadingStyle.Render("トークン発行中..."),
+		))
+		b.WriteString("\n\n")
 		return b.String()
 	} else if m.token != "" {
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("222")).Render("🎉トークン発行完了"))
+		successStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("46")).
+			Bold(true)
+		
+		instructionStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("205"))
+		
+		b.WriteString(successStyle.Render("🎉 トークン発行完了"))
 		b.WriteString("\n\n")
-		b.WriteString(gTTokenStyle.Render(maskToken(m.token)))
+		
+		tokenContainer := lipgloss.NewStyle().
+			Align(lipgloss.Center).
+			MarginTop(1).
+			MarginBottom(2)
+		
+		b.WriteString(tokenContainer.Render(gTTokenStyle.Render("Token: " + maskToken(m.token))))
+		b.WriteString("\n")
+		b.WriteString(instructionStyle.Render("➤ Enterキーで戻る"))
 		b.WriteString("\n\n")
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("222")).Render("戻る"))
 		return b.String()
 	}
 
+	// フォームのレンダリング
+	formStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("240")).
+		Padding(1, 2).
+		MarginBottom(1)
+
+	var formContent strings.Builder
+	
+	// 入力フィールドのラベル
+	labels := []string{"メールアドレス", "パスワード", "Minecraftサーバのポート番号"}
+	descriptions := []string{
+		"アカウント作成時に使用したメールアドレス",
+		"アカウント作成時に設定したパスワード", 
+		"公開するMinecraftサーバのポート番号（例: 25565）",
+	}
+	
 	for i := range m.inputs {
-		b.WriteString(m.inputs[i].View())
+		labelStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("205")).
+			Bold(true).
+			MarginBottom(1)
+		
+		descStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("240")).
+			Italic(true).
+			MarginBottom(1)
+		
+		formContent.WriteString(labelStyle.Render(labels[i]))
+		formContent.WriteString("\n")
+		formContent.WriteString(descStyle.Render(descriptions[i]))
+		formContent.WriteString("\n")
+		formContent.WriteString(m.inputs[i].View())
 		if i < len(m.inputs)-1 {
-			b.WriteRune('\n')
+			formContent.WriteString("\n\n")
 		}
 	}
 
-	button := &gTBlurredButton
+	b.WriteString(formStyle.Render(formContent.String()))
+	b.WriteString("\n")
+
+	// ボタンのレンダリング
+	var button string
 	if m.focusIndex == len(m.inputs) {
-		button = &gTFocusedButton
+		button = gTFocusedButton
+	} else {
+		button = gTBlurredButton
 	}
-	fmt.Fprintf(&b, "\n\n%s\n\n", *button)
+	
+	buttonContainer := lipgloss.NewStyle().
+		Align(lipgloss.Center).
+		MarginTop(1).
+		MarginBottom(1)
+	
+	b.WriteString(buttonContainer.Render(button))
+	b.WriteString("\n")
 
 	// エラーメッセージを表示
 	if m.errorMessage != "" {
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("160")).Render(m.errorMessage))
+		errorStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("160")).
+			Background(lipgloss.Color("52")).
+			Padding(0, 1).
+			Bold(true).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("160"))
+		
+		b.WriteString(errorStyle.Render("⚠ " + m.errorMessage))
 		b.WriteString("\n\n")
 	}
 
+	// 重要な注意事項
+	warningStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("214")).
+		Background(lipgloss.Color("58")).
+		Bold(true).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("214")).
+		Padding(0, 1).
+		MarginBottom(1)
+	
+	b.WriteString(warningStyle.Render("💡 発行されたトークンは安全に保管してください"))
+	b.WriteString("\n\n")
+
+	// 操作説明
+	navigationStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240")).
+		Border(lipgloss.NormalBorder()).
+		BorderTop(true).
+		BorderForeground(lipgloss.Color("240")).
+		PaddingTop(1).
+		MarginTop(1)
+	
+	navigation := "操作方法: Tab/↑↓で移動 | Enter で実行 | Esc で戻る"
+	b.WriteString(navigationStyle.Render(navigation))
+	b.WriteString("\n\n")
+
 	// ヘルプメッセージを追加
-	helpMessage := gTHelpStyle.Render(
+	helpStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240")).
+		Italic(true)
+	
+	helpMessage := helpStyle.Render(
 		"不具合や不明点はdiscordサーバか開発者個人へ連絡してください\n" +
-			"discord server: https://discord.gg/3bsrZ4aBXK\n" +
+			"discord server: https://discord.gg/VgqaneJmaR\n" +
 			"開発者discord ID: natyosu.zip",
 	)
 	b.WriteString(helpMessage)
@@ -390,15 +536,54 @@ func (m GenerateTokenModel) View() string {
 }
 
 func maskToken(token string) string {
-	if len(token) < 15 {
-		// トークンが15文字未満の場合はそのまま返す
+	if len(token) < 10 {
+		// トークンが10文字未満の場合はそのまま返す
 		return token
 	}
 
-	// トークンの先頭15文字を取得
-	prefix := token[:5]              // 最初の5文字
-	masked := "xxxxxxxxxxxxxxxxxxxx" // 後半20文字を'x'に置き換え
+	// トークンの先頭8文字と末尾4文字を表示し、中間をマスク
+	if len(token) <= 16 {
+		prefix := token[:4]
+		suffix := token[len(token)-4:]
+		masked := strings.Repeat("*", len(token)-8)
+		return prefix + masked + suffix
+	}
+
+	// 長いトークンの場合
+	prefix := token[:8]              // 最初の8文字
+	suffix := token[len(token)-4:]   // 最後の4文字
+	masked := strings.Repeat("*", 16) // 中間16文字を'*'に置き換え
 
 	// マスクされたトークンを返す
-	return prefix + masked
+	return prefix + masked + suffix
+}
+
+// updateAccountInfo は accounts.ini にアカウント情報を更新する
+func updateAccountInfo(email, plan, bandwidth, expireAt string) error {
+	// accounts.ini ファイルを読み込み、存在しない場合は新しく作成
+	cfg, err := ini.Load("accounts.ini")
+	if err != nil {
+		// ファイルが存在しない場合は新しく作成
+		cfg = ini.Empty()
+	}
+
+	// Account セクションを取得または作成
+	section := cfg.Section("Account")
+	
+	// メールアドレス、プラン、帯域幅を設定（空でない場合のみ）
+	if email != "" {
+		section.Key("Email").SetValue(email)
+	}
+	if plan != "" {
+		section.Key("Plan").SetValue(plan)
+	}
+	if bandwidth != "" {
+		section.Key("Bandwidth").SetValue(bandwidth)
+	}
+	if expireAt != "" {
+		section.Key("ExpireAt").SetValue(expireAt)
+	}
+
+	// ファイルに保存
+	return cfg.SaveTo("accounts.ini")
 }
