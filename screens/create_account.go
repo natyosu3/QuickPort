@@ -1,6 +1,7 @@
 package screens
 
 import (
+	"QuickPort/share"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -25,9 +26,28 @@ var (
 	cANoStyle             = lipgloss.NewStyle()
 	cAHelpStyle           = cABlurredStyle
 	cACursorModeHelpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-
-	cAFocusedButton = cAFocusedStyle.Render("[ 登録 ]")
-	cABlurredButton = fmt.Sprintf("[ %s ]", cABlurredStyle.Render("登録"))
+	cATitleStyle = lipgloss.NewStyle().
+		Border(lipgloss.DoubleBorder()).
+		Align(lipgloss.Center).
+		Padding(1).
+		Width(60).
+		Bold(true).
+		Foreground(lipgloss.Color("205"))
+	cAFocusedButton = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("15")).
+		Background(lipgloss.Color("205")).
+		Bold(true).
+		Padding(0, 3).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("205")).
+		Render("アカウント登録")
+	cABlurredButton = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240")).
+		Background(lipgloss.Color("236")).
+		Padding(0, 3).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("240")).
+		Render("アカウント登録")
 )
 
 type CreateAccountModel struct {
@@ -92,7 +112,7 @@ func saveToFile(email string) error {
 func InitialCreateAccountModel() CreateAccountModel {
 	s := spinner.New()
 	s.Spinner = spinner.Points
-	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("222"))
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 	m := CreateAccountModel{
 		inputs:  make([]textinput.Model, 3),
 		spinner: s,
@@ -105,21 +125,22 @@ func InitialCreateAccountModel() CreateAccountModel {
 		t = textinput.New()
 		t.Cursor.Style = cACursorStyle
 		t.CharLimit = 32
+		t.Width = 40
 
 		switch i {
 		case 0:
-			t.Placeholder = "メールアドレス"
+			t.Placeholder = "example@domain.com"
 			t.Focus()
 			t.PromptStyle = cAFocusedStyle
 			t.TextStyle = cAFocusedStyle
 			t.CharLimit = 64
 		case 1:
-			t.Placeholder = "パスワード"
+			t.Placeholder = "5文字以上のパスワード"
 			t.EchoMode = textinput.EchoPassword
 			t.EchoCharacter = '•'
 			t.CharLimit = 64
 		case 2:
-			t.Placeholder = "パスワード【確認】"
+			t.Placeholder = "パスワードを再入力"
 			t.EchoMode = textinput.EchoPassword
 			t.EchoCharacter = '•'
 			t.CharLimit = 64
@@ -278,42 +299,113 @@ func (m CreateAccountModel) View() string {
 	var b strings.Builder
 
 	// タイトルを追加
-	title := titleStyle.Render("アカウント作成")
+	title := cATitleStyle.Render("アカウント作成")
 	b.WriteString(title)
-	b.WriteString("\n\n") // タイトルとフォームの間にスペースを追加
+	b.WriteString("\n\n")
 
 	if m.loadding {
-		b.WriteString(m.spinner.View())
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("222")).Render(" アカウント作成中.\n"))
+		loadingStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("205")).
+			Bold(true)
+		
+		b.WriteString(lipgloss.NewStyle().Align(lipgloss.Center).Render(
+			m.spinner.View() + " " + loadingStyle.Render("アカウント作成中..."),
+		))
+		b.WriteString("\n\n")
 		return b.String()
 	} else if m.isComp {
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("222")).Render("🎉アカウント作成完了"))
+		successStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("46")).
+			Bold(true)
+		
+		instructionStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("205"))
+		
+		b.WriteString(successStyle.Render("🎉 アカウント作成完了"))
 		b.WriteString("\n\n")
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("222")).Render("➤ Enterキーでトークン発行に移動"))
+		b.WriteString(instructionStyle.Render("➤ Enterキーでトークン発行に移動"))
+		b.WriteString("\n\n")
 		return b.String()
 	}
 
+	// フォームのレンダリング
+	formStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("240")).
+		Padding(1, 2).
+		MarginBottom(1)
+
+	var formContent strings.Builder
+	
+	// 入力フィールドのラベル
+	labels := []string{"メールアドレス", "パスワード", "パスワード確認"}
+	
 	for i := range m.inputs {
-		b.WriteString(m.inputs[i].View())
+		labelStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("205")).
+			Bold(true).
+			MarginBottom(1)
+		
+		formContent.WriteString(labelStyle.Render(labels[i]))
+		formContent.WriteString("\n")
+		formContent.WriteString(m.inputs[i].View())
 		if i < len(m.inputs)-1 {
-			b.WriteRune('\n')
+			formContent.WriteString("\n\n")
 		}
 	}
 
-	button := &cABlurredButton
+	b.WriteString(formStyle.Render(formContent.String()))
+	b.WriteString("\n")
+
+	// ボタンのレンダリング
+	var button string
 	if m.focusIndex == len(m.inputs) {
-		button = &cAFocusedButton
+		button = cAFocusedButton
+	} else {
+		button = cABlurredButton
 	}
-	fmt.Fprintf(&b, "\n\n%s\n\n", *button)
+	
+	buttonContainer := lipgloss.NewStyle().
+		Align(lipgloss.Center).
+		MarginTop(1).
+		MarginBottom(1)
+	
+	b.WriteString(buttonContainer.Render(button))
+	b.WriteString("\n")
 
 	// エラーメッセージを表示
 	if m.errorMessage != "" {
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("160")).Render(m.errorMessage))
+		errorStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("160")).
+			Background(lipgloss.Color("52")).
+			Padding(0, 1).
+			Bold(true).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("160"))
+		
+		b.WriteString(errorStyle.Render("⚠ " + m.errorMessage))
 		b.WriteString("\n\n")
 	}
 
+	// 操作説明
+	navigationStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240")).
+		Border(lipgloss.NormalBorder()).
+		BorderTop(true).
+		BorderForeground(lipgloss.Color("240")).
+		PaddingTop(1).
+		MarginTop(1)
+	
+	navigation := "操作方法: Tab/↑↓で移動 | Enter で実行 | Esc で戻る"
+	b.WriteString(navigationStyle.Render(navigation))
+	b.WriteString("\n\n")
+
 	// ヘルプメッセージを追加
-	helpMessage := cAHelpStyle.Render(
+	helpStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240")).
+		Italic(true)
+	
+	helpMessage := helpStyle.Render(
 		"不具合や不明点はdiscordサーバか開発者個人へ連絡してください\n" +
 			"discord server: https://discord.gg/VgqaneJmaR\n" +
 			"開発者discord ID: natyosu.zip",
@@ -325,9 +417,7 @@ func (m CreateAccountModel) View() string {
 
 func sendCreateAccountRequest(body []byte, ch chan accountChan) {
 	// HTTPSリクエストを送信
-	// endpoint := "https://quick-port-auth.natyosu.com/auth/signup"
-	// endpoint := "http://163.44.96.225:8081/auth/signup"
-	endpoint := "http://localhost:8081/auth/signup"
+	endpoint := share.BASE_API_URL + "/auth/signup"
 	req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(body))
 	if err != nil {
 		log.Printf("HTTPリクエストの作成に失敗しました: %v", err)

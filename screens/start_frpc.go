@@ -16,29 +16,15 @@ import (
 	"QuickPort/share"
 )
 
-var (
-	sFFocusedStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
-	sFBlurredStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	sFCursorStyle         = sFFocusedStyle
-	sFNoStyle             = lipgloss.NewStyle()
-	sFHelpStyle           = sFBlurredStyle
-	sFCursorModeHelpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 
-	sFFocusedButton = sFFocusedStyle.Render("[ 登録 ]")
-	sFBlurredButton = fmt.Sprintf("[ %s ]", sFBlurredStyle.Render("登録"))
-)
 
 type StartFrpcModel struct {
-	focusIndex      int
 	errorMessage    string
 	isComp          bool
 	spinner         spinner.Model
-	loadding        bool
 	token           string
 	getPortLoading  bool
 	getPortCh       chan getPortChan
-	getPortIsComp   bool
-	allComp         bool
 	clientService   *core.FRPClient
 	clientStarted   bool
 	progress        progress.Model
@@ -221,8 +207,7 @@ func (m StartFrpcModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// FRPクライアントがまだ起動していない場合のみ起動
 	if !m.clientStarted && m.token != "" && !m.hasError {
 		// トークンからメタデータを取得し、FRPクライアントを初期化
-		// m.clientService = core.NewFRPClient("163.44.96.225:5555", m.token)
-		m.clientService = core.NewFRPClient("localhost:5555", m.token)
+		m.clientService = core.NewFRPClient("163.44.96.225:5555", m.token)
 		go func() {
 			err := m.clientService.Start()
 			if err != nil {

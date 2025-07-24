@@ -2,8 +2,8 @@ package screens
 
 import (
 	"QuickPort/share"
-	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -15,19 +15,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"gopkg.in/ini.v1"
-)
-
-var (
-	focusedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
-	blurredStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	activeStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("10")) // 緑色
-	inactiveStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))  // 赤色
-	cursorStyle   = focusedStyle
-	noStyle       = lipgloss.NewStyle()
-
-	// レイアウト用のスタイル
-	leftColumnStyle  = lipgloss.NewStyle().Width(30).Padding(1)
-	rightColumnStyle = lipgloss.NewStyle().Width(30).Padding(1).Align(lipgloss.Center)
 )
 
 // 画面切り替えメッセージ
@@ -67,12 +54,6 @@ type AccountStatus struct {
 	plan      string
 	bandwidth string
 	expireAt  string
-}
-
-// GitHubリリース情報構造体
-type GitHubRelease struct {
-	TagName string `json:"tag_name"`
-	Body    string `json:"body"`
 }
 
 // メインメニューの Model
@@ -463,7 +444,7 @@ func (m WelcomeScreen) View() string {
 // 認証サーバがオンラインか確認する関数
 func checkServerStatus() bool {
 	// pingエンドポイントにリクエストを送信
-	parsedURL, err := url.Parse("https://quick-port-auth.natyosu.com/ping")
+	parsedURL, err := url.Parse(share.BASE_API_URL + "/ping")
 	if err != nil {
 		return false
 	}
@@ -494,35 +475,50 @@ func getReleaseMessage() string {
 		Timeout: 10 * time.Second,
 	}
 
-	resp, err := client.Get("https://api.github.com/repos/natyosu3/QuickPort/releases/latest")
+	// WebサイトからHTMLを取得
+	resp, err := client.Get("https://qp.natyosu.com/") // または適切なWebサイトのURL
 	if err != nil {
-		log.Printf("GitHubリリース情報の取得に失敗しました: %v", err)
+		log.Printf("Webサイトからのメッセージ取得に失敗しました: %v", err)
 		return ""
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("GitHubリリース情報の取得に失敗しました (ステータス: %d)", resp.StatusCode)
+		log.Printf("Webサイトからのメッセージ取得に失敗しました (ステータス: %d)", resp.StatusCode)
 		return ""
 	}
 
-	var release GitHubRelease
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		log.Printf("GitHubリリース情報のデコードに失敗しました: %v", err)
+	// レスポンスボディを読み取り
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("レスポンスボディの読み取りに失敗しました: %v", err)
 		return ""
 	}
 
-	// [メッセージ] xxxxx の部分を抽出
-	re := regexp.MustCompile(`\[メッセージ\]\s*(.+)`)
-	matches := re.FindStringSubmatch(release.Body)
+	htmlContent := string(body)
+
+	// 現在のバージョンを取得
+	currentVersion := share.VERSION
+
+	// HTMLから該当バージョンのメッセージを抽出
+	// data-version="2.0.0" data-message="..." のパターンを検索
+	pattern := fmt.Sprintf(`data-version="%s"\s+data-message="([^"]+)"`, regexp.QuoteMeta(currentVersion))
+	re := regexp.MustCompile(pattern)
+	matches := re.FindStringSubmatch(htmlContent)
+	
 	if len(matches) > 1 {
 		return "  " + strings.TrimSpace(matches[1])
 	}
 
-	// [メッセージ]が見つからない場合は、bodyの最初の数行を返す
-	lines := strings.Split(release.Body, "\n")
-	if len(lines) > 0 && strings.TrimSpace(lines[0]) != "" {
-		return "  " + strings.TrimSpace(lines[0])
+	// 該当バージョンが見つからない場合は、最新バージョンのメッセージを取得
+	// data-version="..." data-message="..." の全てのパターンを検索
+	allVersionsPattern := `data-version="([^"]+)"\s+data-message="([^"]+)"`
+	allRe := regexp.MustCompile(allVersionsPattern)
+	allMatches := allRe.FindAllStringSubmatch(htmlContent, -1)
+	
+	if len(allMatches) > 0 {
+		// 最初に見つかったメッセージを返す（通常は最新版）
+		return "  " + strings.TrimSpace(allMatches[0][2])
 	}
 
 	return ""
@@ -566,7 +562,7 @@ func getAccountStatus() AccountStatus {
 		plan = "無料"
 	}
 	if bandwidth == "" {
-		bandwidth = "800KB"
+		bandwidth = "300KB"
 	}
 	if expireAt == "" {
 		expireAt = "未設定"
