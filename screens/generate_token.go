@@ -96,7 +96,7 @@ func InitialGenerateTokenModel() GenerateTokenModel {
 	s.Spinner = spinner.Points
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 	m := GenerateTokenModel{
-		inputs:  make([]textinput.Model, 3),
+		inputs:  make([]textinput.Model, 4),
 		spinner: s,
 		ch:      make(chan tokenChan),
 	}
@@ -123,6 +123,9 @@ func InitialGenerateTokenModel() GenerateTokenModel {
 		case 2:
 			t.Placeholder = "25565"
 			t.CharLimit = 10
+		case 3:
+			t.Placeholder = "tcp または udp"
+			t.CharLimit = 3
 		}
 
 		m.inputs[i] = t
@@ -174,10 +177,17 @@ func (m GenerateTokenModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				email := m.inputs[0].Value()
 				password := m.inputs[1].Value()
 				localPortStr := m.inputs[2].Value()
+				protocolType := strings.ToLower(strings.TrimSpace(m.inputs[3].Value()))
 
 				localPort, err := strconv.Atoi(localPortStr)
 				if err != nil {
 					m.errorMessage = "ポート番号は数値で入力してください"
+					return m, nil
+				}
+
+				// プロトコルタイプの検証
+				if protocolType != "tcp" && protocolType != "udp" {
+					m.errorMessage = "プロトコルタイプは tcp または udp で入力してください"
 					return m, nil
 				}
 
@@ -186,7 +196,7 @@ func (m GenerateTokenModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				reqest.RequestUserInfo.Password = password
 				reqest.RequestTokenMetadata.LocalPort = localPort
 				reqest.RequestTokenMetadata.LocalIP = "127.0.0.1"
-				reqest.RequestTokenMetadata.ProtocolType = "tcp"
+				reqest.RequestTokenMetadata.ProtocolType = protocolType
 
 				// リクエストボディをJSONに変換
 				requestBody, err := json.Marshal(reqest)
@@ -433,11 +443,12 @@ func (m GenerateTokenModel) View() string {
 	var formContent strings.Builder
 	
 	// 入力フィールドのラベル
-	labels := []string{"メールアドレス", "パスワード", "Minecraftサーバのポート番号"}
+	labels := []string{"メールアドレス", "パスワード", "Minecraftサーバのポート番号", "プロトコルタイプ"}
 	descriptions := []string{
 		"アカウント作成時に使用したメールアドレス",
 		"アカウント作成時に設定したパスワード", 
 		"公開するMinecraftサーバのポート番号（例: 25565）",
+		"使用するプロトコル（tcp または udp）",
 	}
 	
 	for i := range m.inputs {
