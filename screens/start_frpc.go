@@ -72,6 +72,9 @@ func waitForError(errorCh chan error) tea.Cmd {
 }
 
 func InitialStartFrpcModel() StartFrpcModel {
+	// 接続状態をリセット
+	share.IsConnection = false
+	
 	s := spinner.New()
 	s.Spinner = spinner.Globe
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
@@ -143,15 +146,28 @@ func (m StartFrpcModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.showSuccess && !m.hasError {
 			m.connectionTimer++
 			
-			// 進捗を自動的に進める
-			if !share.IsConnection {
-				if m.connectionTimer%15 == 0 && m.currentStep < m.maxSteps-1 {
-					m.currentStep++
-				}
-			} else if !m.showSuccess {
+			// タイムアウトチェック (30秒)
+			if m.connectionTimer > 300 && !share.IsConnection {
+				m.hasError = true
+				m.errorMessage = "接続タイムアウト: サーバーへの接続に失敗しました"
+				return m, nil
+			}
+			
+			// 接続状態に応じて進捗を管理
+			if share.IsConnection && m.currentStep < m.maxSteps {
+				// 接続が成功したら全ステップを完了
 				m.currentStep = m.maxSteps
 				m.showSuccess = true
 				m.successTimer = 0
+			} else if !share.IsConnection {
+				// 接続がまだ成功していない場合は、最初の3ステップまでのみ進める
+				expectedStep := m.connectionTimer / 15
+				if expectedStep > 3 {
+					expectedStep = 3
+				}
+				if expectedStep > m.currentStep {
+					m.currentStep = expectedStep
+				}
 			}
 		} else if m.showSuccess {
 			m.successTimer++
@@ -207,7 +223,7 @@ func (m StartFrpcModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// FRPクライアントがまだ起動していない場合のみ起動
 	if !m.clientStarted && m.token != "" && !m.hasError {
 		// トークンからメタデータを取得し、FRPクライアントを初期化
-		m.clientService = core.NewFRPClient("163.44.96.225:5555", m.token)
+		m.clientService = core.NewFRPClient("163.44.96.225:4444", m.token)
 		go func() {
 			err := m.clientService.Start()
 			if err != nil {

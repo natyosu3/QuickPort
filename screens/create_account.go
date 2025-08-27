@@ -21,11 +21,8 @@ import (
 
 var (
 	cAFocusedStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
-	cABlurredStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	cACursorStyle         = cAFocusedStyle
 	cANoStyle             = lipgloss.NewStyle()
-	cAHelpStyle           = cABlurredStyle
-	cACursorModeHelpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	cATitleStyle = lipgloss.NewStyle().
 		Border(lipgloss.DoubleBorder()).
 		Align(lipgloss.Center).
