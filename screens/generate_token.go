@@ -21,10 +21,8 @@ import (
 
 var (
 	gTFocusedStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
-	gTBlurredStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	gTCursorStyle         = gTFocusedStyle
 	gTNoStyle             = lipgloss.NewStyle()
-	gTHelpStyle           = gTBlurredStyle
 	gTTokenStyle          = lipgloss.NewStyle().
 		Foreground(lipgloss.Color("46")).
 		Background(lipgloss.Color("22")).
