@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"QuickPort/app"
+	"QuickPort/share"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -13,6 +14,8 @@ import (
 func main() {
 	// プログラム引数でlog出力を有効にする
 	if len(os.Args) > 1 && os.Args[1] == "--log" {
+		share.LogEnabled = true // ログ有効フラグを設定
+		
 		// ログファイルを作成または開く
 		logFile, err := os.OpenFile("qp.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
 		if err != nil {

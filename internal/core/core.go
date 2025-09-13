@@ -72,8 +72,10 @@ type FRPClient struct {
 }
 
 func NewFRPClient(serverAddr, token string) *FRPClient {
-	// FRPクライアントのログを完全に無効化（Bubble Teaとの競合を避けるため）
-	log.SetOutput(io.Discard)
+	// ログが有効でない場合のみ、FRPクライアントのログを無効化（Bubble Teaとの競合を避けるため）
+	if !share.LogEnabled {
+		log.SetOutput(io.Discard)
+	}
 	
 	return &FRPClient{
 		serverAddr:     serverAddr,
@@ -322,8 +324,8 @@ func (c *FRPClient) handleNewUDPConnection(msg *Message, proxyConfig *ProxyConfi
 		return
 	}
 
-	// UDPコネクションにタイムアウトを設定
-	udpConn.SetReadDeadline(time.Now().Add(30 * time.Second))
+	// UDPコネクションにタイムアウトを設定（5分に延長）
+	udpConn.SetReadDeadline(time.Now().Add(5 * time.Minute))
 
 	c.mutex.Lock()
 	c.udpConns[msg.ConnID] = udpConn
@@ -368,26 +370,38 @@ func (c *FRPClient) forwardFromLocalUDP(udpConn *net.UDPConn, connID string) {
 		log.Printf("UDP connection %s closed", connID)
 	}()
 
-	// UDPコネクションにタイムアウトを設定（30秒）
-	udpConn.SetReadDeadline(time.Now().Add(30 * time.Second))
+	// UDPコネクションにタイムアウトを設定（5分に延長）
+	timeout := 5 * time.Minute
+	udpConn.SetReadDeadline(time.Now().Add(timeout))
 
 	buffer := make([]byte, 65535) // UDPの最大パケットサイズ
+	lastActivity := time.Now()
+	
 	for {
 		n, err := udpConn.Read(buffer)
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				log.Printf("UDP connection %s timed out, closing", connID)
+				// タイムアウトの場合、最後の活動時間をチェック
+				if time.Since(lastActivity) > timeout {
+					log.Printf("UDP connection %s timed out after %v of inactivity, closing", connID, timeout)
+				} else {
+					log.Printf("UDP connection %s read timeout, but activity detected recently, continuing", connID)
+					// タイムアウトを再設定
+					udpConn.SetReadDeadline(time.Now().Add(timeout))
+					continue
+				}
 			} else if err != io.EOF {
 				log.Printf("Local UDP connection read error: %v", err)
 			}
 			break
 		}
 
+		lastActivity = time.Now()
 		log.Printf("UDP connection %s received %d bytes from local service", connID, n)
 		c.sendDataMessage(connID, buffer[:n], "udp")
 		
 		// タイムアウトを延長
-		udpConn.SetReadDeadline(time.Now().Add(30 * time.Second))
+		udpConn.SetReadDeadline(time.Now().Add(timeout))
 	}
 }
 
@@ -432,6 +446,9 @@ func (c *FRPClient) handleUDPData(msg *Message) {
 	if exists && udpConn != nil {
 		log.Printf("Forwarding UDP data to local service: %d bytes", len(msg.Data))
 		udpConn.Write(msg.Data)
+		
+		// データ受信時にタイムアウトを延長（5分）
+		udpConn.SetReadDeadline(time.Now().Add(5 * time.Minute))
 	} else {
 		log.Printf("Failed to handle UDP data for connection %s", msg.ConnID)
 	}
@@ -475,8 +492,8 @@ func (c *FRPClient) createUDPConnectionFromConnID(connID string) {
 		return
 	}
 
-	// UDPコネクションにタイムアウトを設定
-	udpConn.SetReadDeadline(time.Now().Add(30 * time.Second))
+	// UDPコネクションにタイムアウトを設定（5分に延長）
+	udpConn.SetReadDeadline(time.Now().Add(5 * time.Minute))
 
 	c.mutex.Lock()
 	c.udpConns[connID] = udpConn
